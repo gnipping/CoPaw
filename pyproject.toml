@@ -50,6 +50,7 @@ include-package-data = true
     "tokenizer/**",
     "security/tool_guard/rules/**",
     "security/skill_scanner/rules/**",
+    "security/skill_scanner/data/**",
 ]
 
 [build-system]
