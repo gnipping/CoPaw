@@ -274,7 +274,7 @@ def _log_findings(tool_name: str, result) -> None:
     logger.warning(
         "[TOOL GUARD] Summary for tool '%s': %d finding(s), "
         "max_severity=%s, duration=%.3fs. "
-        "Execution NOT blocked.",
+        "Further handling delegated to caller.",
         tool_name,
         result.findings_count,
         result.max_severity.value,
