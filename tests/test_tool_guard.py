@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agentscope.message import TextBlock
+from agentscope.tool import ToolResponse
 
 from copaw.security.tool_guard.models import (
     GuardFinding,
@@ -25,9 +27,10 @@ from copaw.security.tool_guard.guardians.rule_guardian import (
     RuleBasedToolGuardian,
     load_rules_from_directory,
 )
-from copaw.security.tool_guard.engine import ToolGuardEngine, guard_tool_call
+from copaw.security.tool_guard.engine import ToolGuardEngine
 from copaw.security.tool_guard.hook import ToolGuardHook
 from copaw.security.tool_guard import hook as tool_guard_hook_module
+from copaw.security.tool_guardrail import guard_tool_call
 
 
 # =====================================================================
@@ -579,6 +582,7 @@ class TestToolGuardHook:
         result = await hook(agent, kwargs)
         assert result is None
         engine.guard.assert_called_once()
+
 
 
 # =====================================================================
