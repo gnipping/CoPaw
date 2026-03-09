@@ -153,6 +153,54 @@ def _resolve_guarded_tools(
     return _parse_guarded_tokens(raw.split(","))
 
 
+# ---------------------------------------------------------------------------
+# Denied tools (unconditional auto-reject, no approval offered)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_DENIED_TOOLS: frozenset[str] = frozenset()
+
+
+def _resolve_denied_tools(
+    user_defined: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> set[str]:
+    """Resolve the set of tools that are unconditionally denied.
+
+    Priority:
+    1) constructor-provided ``user_defined``
+    2) ``COPAW_TOOL_GUARD_DENIED_TOOLS`` env var (comma-separated)
+    3) ``config.json`` → ``security.tool_guard.denied_tools``
+    4) built-in default (empty)
+
+    Returns
+    -------
+    set[str]
+        Tool names that must be auto-rejected without user approval.
+    """
+    if user_defined is not None:
+        return set(user_defined)
+
+    raw = os.environ.get("COPAW_TOOL_GUARD_DENIED_TOOLS")
+    if raw is not None:
+        return {t.strip() for t in raw.split(",") if t.strip()}
+
+    config_path = Path(WORKING_DIR) / CONFIG_FILE
+    if config_path.is_file():
+        try:
+            with open(config_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            security = data.get("security")
+            if isinstance(security, dict):
+                tool_guard = security.get("tool_guard")
+                if isinstance(tool_guard, dict):
+                    denied = tool_guard.get("denied_tools")
+                    if isinstance(denied, list):
+                        return {str(t).strip() for t in denied if t}
+        except Exception:
+            pass
+
+    return set(_DEFAULT_DENIED_TOOLS)
+
+
 class ToolGuardHook:
     """AgentScope ``pre_acting`` hook that guards tool-call parameters.
 
