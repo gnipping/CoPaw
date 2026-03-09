@@ -504,11 +504,15 @@ class CoPawAgent(ReActAgent):
     def _init_tool_guard(self) -> None:
         """Lazy-init tool-guard components (called once on first _acting)."""
         from copaw.security.tool_guard.engine import get_guard_engine
-        from copaw.security.tool_guard.hook import _resolve_guarded_tools
+        from copaw.security.tool_guard.hook import (
+            _resolve_guarded_tools,
+            _resolve_denied_tools,
+        )
         from copaw.app.approvals import get_approval_service
 
         self._tool_guard_engine = get_guard_engine()
         self._tool_guard_guarded_tools = _resolve_guarded_tools()
+        self._tool_guard_denied_tools: set[str] = _resolve_denied_tools()
         self._tool_guard_approval_service = get_approval_service()
 
     def _should_guard_tool(self, tool_name: str) -> bool:
@@ -532,9 +536,11 @@ class CoPawAgent(ReActAgent):
         1. Check for a one-shot pre-approval (from a prior
            ``/daemon approve``). If found, skip the guard.
         2. Run ToolGuardEngine on the tool parameters.
-        3. If findings exist and session supports approval, deny the
-           tool immediately and record a pending approval so the user
-           can type ``/daemon approve`` later.
+        3. If findings exist:
+           a. If tool is in *denied_tools*, auto-deny immediately
+              (no approval offered).
+           b. Otherwise, enter the approval flow so the user can
+              type ``/daemon approve`` to allow execution.
         4. If no guard needed, delegate to ``super()._acting``.
         """
         # Lazy initialise guard components
@@ -578,6 +584,19 @@ class CoPawAgent(ReActAgent):
 
                     _log_findings(tool_name, result)
 
+                    # Tools in denied_tools: auto-deny on any finding
+                    if tool_name in self._tool_guard_denied_tools:
+                        logger.warning(
+                            "Tool guard: tool '%s' is in the denied "
+                            "set, auto-denying",
+                            tool_name,
+                        )
+                        return await self._acting_auto_denied(
+                            tool_call,
+                            tool_name,
+                            result,
+                        )
+
                     if self._should_require_approval():
                         return await self._acting_with_approval(
                             tool_call,
@@ -593,6 +612,49 @@ class CoPawAgent(ReActAgent):
             )
 
         return await super()._acting(tool_call)
+
+    async def _acting_auto_denied(
+        self,
+        tool_call,
+        tool_name: str,
+        guard_result,
+    ) -> None:
+        """Auto-deny a tool call without offering approval.
+
+        Used for tools in the *denied_tools* set when the guard engine
+        detects risk.  The tool result is injected into memory so the
+        LLM can see the denial, but no pending-approval record is
+        created — the user cannot override via ``/daemon approve``.
+        """
+        from agentscope.message import ToolResultBlock
+        from copaw.security.tool_guard.approval import format_findings_summary
+
+        findings_text = format_findings_summary(guard_result)
+        denied_text = (
+            f"**Tool Guard: Tool Blocked (auto-denied)**\n\n"
+            f"- Tool: `{tool_name}`\n"
+            f"- Max severity: `{guard_result.max_severity.value}`\n"
+            f"- Findings: `{guard_result.findings_count}`\n\n"
+            f"{findings_text}\n\n"
+            f"This tool is in the denied list and cannot be approved."
+        )
+
+        tool_res_msg = Msg(
+            "system",
+            [
+                ToolResultBlock(
+                    type="tool_result",
+                    id=tool_call["id"],
+                    name=tool_name,
+                    output=[{"type": "text", "text": denied_text}],
+                ),
+            ],
+            "system",
+        )
+
+        await self.print(tool_res_msg, True)
+        await self.memory.add(tool_res_msg)
+        return None
 
     async def _acting_with_approval(
         self,

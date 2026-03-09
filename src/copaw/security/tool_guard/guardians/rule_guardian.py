@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # Default rules directory (shipped with the package).
 _DEFAULT_RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
 
+# Default rule files loaded when no explicit rules_dir is provided.
+_DEFAULT_RULE_FILES: list[str] = [
+    "dangerous_shell_commands.yaml",
+]
+
 
 # ---------------------------------------------------------------------------
 # GuardRule – one YAML rule entry
@@ -152,18 +157,47 @@ def load_rules_from_yaml(yaml_path: Path) -> list[GuardRule]:
         return []
 
 
-def load_rules_from_directory(rules_dir: Path | None = None) -> list[GuardRule]:
-    """Load all YAML rule files from a directory."""
+def load_rules_from_directory(
+    rules_dir: Path | None = None,
+    *,
+    rule_files: list[str] | None = None,
+) -> list[GuardRule]:
+    """Load YAML rule files from a directory.
+
+    Parameters
+    ----------
+    rules_dir:
+        Directory containing rule files.  Defaults to the bundled
+        ``rules/`` directory.
+    rule_files:
+        Explicit list of filenames to load.  When *None* and *rules_dir*
+        is also *None*, only ``_DEFAULT_RULE_FILES`` are loaded.  When
+        *None* and a custom *rules_dir* is given, all ``*.yaml`` /
+        ``*.yml`` files in that directory are loaded.
+    """
     directory = rules_dir or _DEFAULT_RULES_DIR
     if not directory.is_dir():
         logger.warning("Guard rules directory not found: %s", directory)
         return []
 
+    # Determine which files to load
+    if rule_files is not None:
+        yaml_files = [directory / f for f in rule_files]
+    elif rules_dir is not None:
+        # Custom directory: load everything
+        yaml_files = sorted(directory.glob("*.yaml")) + sorted(
+            directory.glob("*.yml")
+        )
+    else:
+        # Default directory: load only the default subset
+        yaml_files = [directory / f for f in _DEFAULT_RULE_FILES]
+
     rules: list[GuardRule] = []
-    for yaml_file in sorted(directory.glob("*.yaml")):
-        rules.extend(load_rules_from_yaml(yaml_file))
-    for yaml_file in sorted(directory.glob("*.yml")):
-        rules.extend(load_rules_from_yaml(yaml_file))
+    for yaml_file in yaml_files:
+        if yaml_file.is_file():
+            rules.extend(load_rules_from_yaml(yaml_file))
+        else:
+            logger.warning("Guard rule file not found: %s", yaml_file)
 
     logger.debug("Loaded %d guard rules from %s", len(rules), directory)
     return rules
