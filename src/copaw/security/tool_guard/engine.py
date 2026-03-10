@@ -28,22 +28,25 @@ from .models import ToolGuardResult
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Environment-variable knobs
-# ---------------------------------------------------------------------------
-#  COPAW_TOOL_GUARD_ENABLED  – "true" (default) / "false"
-
 _TRUE_STRINGS = {"true", "1", "yes"}
 
 
 def _guard_enabled() -> bool:
-    """Return whether tool-call guarding is enabled."""
-    return os.environ.get("COPAW_TOOL_GUARD_ENABLED", "true").lower() in _TRUE_STRINGS
+    """Return whether tool-call guarding is enabled.
 
+    Priority: env var > config.json > default (True).
+    """
+    env_val = os.environ.get("COPAW_TOOL_GUARD_ENABLED")
+    if env_val is not None:
+        return env_val.lower() in _TRUE_STRINGS
 
-# ---------------------------------------------------------------------------
-# Engine
-# ---------------------------------------------------------------------------
+    try:
+        from copaw.config import load_config
+
+        cfg = load_config()
+        return cfg.security.tool_guard.enabled
+    except Exception:
+        return True
 
 
 class ToolGuardEngine:
@@ -55,7 +58,7 @@ class ToolGuardEngine:
         Explicit list of guardians.  If *None* the default set
         (rule-based) is used.
     enabled:
-        Override the ``COPAW_TOOL_GUARD_ENABLED`` env var.
+        Override ``COPAW_TOOL_GUARD_ENABLED`` env var.
     """
 
     def __init__(
@@ -82,7 +85,10 @@ class ToolGuardEngine:
         try:
             guardians.append(RuleBasedToolGuardian())
         except Exception as exc:  # pragma: no cover
-            logger.warning("Failed to initialise RuleBasedToolGuardian: %s", exc)
+            logger.warning(
+                "Failed to initialise RuleBasedToolGuardian: %s",
+                exc,
+            )
         return guardians
 
     # ------------------------------------------------------------------
@@ -111,6 +117,12 @@ class ToolGuardEngine:
     @enabled.setter
     def enabled(self, value: bool) -> None:
         self._enabled = value
+
+    def reload_rules(self) -> None:
+        """Ask all guardians that support reload to refresh their rules."""
+        for g in self._guardians:
+            if hasattr(g, "reload"):
+                g.reload()
 
     # ------------------------------------------------------------------
     # Core interface
@@ -157,16 +169,12 @@ class ToolGuardEngine:
                     exc,
                 )
                 result.guardians_failed.append(
-                    {"name": guardian.name, "error": str(exc)}
+                    {"name": guardian.name, "error": str(exc)},
                 )
 
         result.guard_duration_seconds = time.monotonic() - t0
         return result
 
-
-# ---------------------------------------------------------------------------
-# Lazy singleton (module-level)
-# ---------------------------------------------------------------------------
 
 _engine_instance: ToolGuardEngine | None = None
 

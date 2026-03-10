@@ -503,15 +503,15 @@ class CoPawAgent(ReActAgent):
     def _init_tool_guard(self) -> None:
         """Lazy-init tool-guard components (called once on first _acting)."""
         from copaw.security.tool_guard.engine import get_guard_engine
-        from copaw.security.tool_guard.hook import (
-            _resolve_guarded_tools,
-            _resolve_denied_tools,
+        from copaw.security.tool_guard.utils import (
+            resolve_guarded_tools,
+            resolve_denied_tools,
         )
         from copaw.app.approvals import get_approval_service
 
         self._tool_guard_engine = get_guard_engine()
-        self._tool_guard_guarded_tools = _resolve_guarded_tools()
-        self._tool_guard_denied_tools: set[str] = _resolve_denied_tools()
+        self._tool_guard_guarded_tools = resolve_guarded_tools()
+        self._tool_guard_denied_tools: set[str] = resolve_denied_tools()
         self._tool_guard_approval_service = get_approval_service()
 
     def _should_guard_tool(self, tool_name: str) -> bool:
@@ -542,7 +542,6 @@ class CoPawAgent(ReActAgent):
               type ``/daemon approve`` to allow execution.
         4. If no guard needed, delegate to ``super()._acting``.
         """
-        # Lazy initialise guard components
         if not hasattr(self, "_tool_guard_engine"):
             self._init_tool_guard()
 
@@ -551,16 +550,16 @@ class CoPawAgent(ReActAgent):
 
         try:
             if tool_name and self._should_guard_tool(tool_name):
-                # Check one-shot pre-approval from a previous
-                # ``/daemon approve`` command.
                 session_id = str(
                     self._request_context.get("session_id") or "",
                 )
                 if session_id:
-                    consumed = await (
-                        self._tool_guard_approval_service.consume_approval(
-                            session_id,
-                            tool_name,
+                    consumed = (
+                        await (
+                            self._tool_guard_approval_service.consume_approval(
+                                session_id,
+                                tool_name,
+                            )
                         )
                     )
                     if consumed:
@@ -570,8 +569,6 @@ class CoPawAgent(ReActAgent):
                             tool_name,
                             session_id[:8],
                         )
-                        # Clean up the previous denied messages
-                        # (reasoning + denied result + denial text)
                         await self._cleanup_tool_guard_denied_messages(
                             include_denial_response=True,
                         )
@@ -579,11 +576,10 @@ class CoPawAgent(ReActAgent):
 
                 result = self._tool_guard_engine.guard(tool_name, tool_input)
                 if result is not None and result.findings:
-                    from copaw.security.tool_guard.hook import _log_findings
+                    from copaw.security.tool_guard.utils import log_findings
 
-                    _log_findings(tool_name, result)
+                    log_findings(tool_name, result)
 
-                    # Tools in denied_tools: auto-deny on any finding
                     if tool_name in self._tool_guard_denied_tools:
                         logger.warning(
                             "Tool guard: tool '%s' is in the denied "
@@ -602,8 +598,8 @@ class CoPawAgent(ReActAgent):
                             tool_name,
                             result,
                         )
+                    # No session_id (CLI): log only, allow execution.
         except Exception as exc:
-            # Never let guard failures disrupt the agent
             logger.warning(
                 "Tool guard check encountered an error (non-blocking): %s",
                 exc,
@@ -617,7 +613,7 @@ class CoPawAgent(ReActAgent):
         tool_call,
         tool_name: str,
         guard_result,
-    ) -> None:
+    ) -> dict | None:
         """Auto-deny a tool call without offering approval.
 
         Used for tools in the *denied_tools* set when the guard engine
@@ -661,7 +657,7 @@ class CoPawAgent(ReActAgent):
         tool_name: str,
         guard_result,
     ) -> dict | None:
-        """Deny the tool call immediately and record a pending approval.
+        """Deny the tool call and record a pending approval.
 
         The agent loop continues with a "denied" tool result so the
         LLM can inform the user about the risk.  The user can later
@@ -674,29 +670,12 @@ class CoPawAgent(ReActAgent):
 
         channel = str(self._request_context.get("channel") or "")
 
-        # Create the tool result message (same structure as parent _acting)
-        tool_res_msg = Msg(
-            "system",
-            [
-                ToolResultBlock(
-                    type="tool_result",
-                    id=tool_call["id"],
-                    name=tool_name,
-                    output=[],
-                ),
-            ],
-            "system",
-        )
-
-        # Mark the last assistant reasoning message (the denied tool_use)
-        # so it can be cleaned up later on approval or denial.
         for msg, marks in reversed(self.memory.content):
             if msg.role == "assistant":
                 if _TOOL_GUARD_DENIED_MARK not in marks:
                     marks.append(_TOOL_GUARD_DENIED_MARK)
                 break
 
-        # Create pending approval record (stores tool_call for reference)
         await self._tool_guard_approval_service.create_pending(
             session_id=str(self._request_context.get("session_id") or ""),
             user_id=str(self._request_context.get("user_id") or ""),
@@ -706,7 +685,6 @@ class CoPawAgent(ReActAgent):
             extra={"tool_call": tool_call},
         )
 
-        # Format the denied tool result with risk details
         findings_text = format_findings_summary(guard_result)
         denied_text = (
             f"⚠️ **Tool Guard: Risk Detected — execution denied**\n\n"
@@ -714,16 +692,24 @@ class CoPawAgent(ReActAgent):
             f"- Max severity: `{guard_result.max_severity.value}`\n"
             f"- Findings: `{guard_result.findings_count}`\n\n"
             f"{findings_text}\n\n"
-            f"Type `/daemon approve` to allow execution, "
+            f"Type `/approve` to allow execution, "
             f"or send any other message to deny."
         )
-        tool_res_msg.content[0]["output"] = [  # type: ignore[index]
-            {"type": "text", "text": denied_text},
-        ]
 
-        # last=True so the UI unlocks and the user can type.
+        tool_res_msg = Msg(
+            "system",
+            [
+                ToolResultBlock(
+                    type="tool_result",
+                    id=tool_call["id"],
+                    name=tool_name,
+                    output=[{"type": "text", "text": denied_text}],
+                ),
+            ],
+            "system",
+        )
+
         await self.print(tool_res_msg, True)
-        # Add the denied tool result with the cleanup mark
         await self.memory.add(
             tool_res_msg,
             marks=_TOOL_GUARD_DENIED_MARK,
@@ -754,9 +740,6 @@ class CoPawAgent(ReActAgent):
                 ids_to_delete.append(msg.id)
                 last_marked_idx = i
 
-        # Optionally remove the next assistant message after the last
-        # marked one (the LLM denial text, e.g. "The tool call has
-        # been denied...").
         if (
             include_denial_response
             and last_marked_idx >= 0

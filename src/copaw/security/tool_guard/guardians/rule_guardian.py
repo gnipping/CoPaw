@@ -86,7 +86,10 @@ class GuardRule:
         self.category = GuardThreatCategory(rule_data["category"])
         self.severity = GuardSeverity(rule_data["severity"])
         self.patterns: list[str] = rule_data.get("patterns", [])
-        self.exclude_patterns: list[str] = rule_data.get("exclude_patterns", [])
+        self.exclude_patterns: list[str] = rule_data.get(
+            "exclude_patterns",
+            [],
+        )
         self.description: str = rule_data.get("description", "")
         self.remediation: str = rule_data.get("remediation", "")
 
@@ -101,10 +104,14 @@ class GuardRule:
         self.compiled_exclude_patterns: list[re.Pattern[str]] = []
         for pat in self.exclude_patterns:
             try:
-                self.compiled_exclude_patterns.append(re.compile(pat, re.IGNORECASE))
+                self.compiled_exclude_patterns.append(
+                    re.compile(pat, re.IGNORECASE),
+                )
             except re.error as exc:
                 logger.warning(
-                    "Bad exclude regex in guard rule %s: %s", self.id, exc
+                    "Bad exclude regex in guard rule %s: %s",
+                    self.id,
+                    exc,
                 )
 
     # ------------------------------------------------------------------
@@ -149,11 +156,19 @@ def load_rules_from_yaml(yaml_path: Path) -> list[GuardRule]:
         with open(yaml_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if not isinstance(data, list):
-            logger.warning("Expected a list in %s, got %s", yaml_path, type(data).__name__)
+            logger.warning(
+                "Expected a list in %s, got %s",
+                yaml_path,
+                type(data).__name__,
+            )
             return []
         return [GuardRule(item) for item in data if isinstance(item, dict)]
     except Exception as exc:
-        logger.warning("Failed to load guard rules from %s: %s", yaml_path, exc)
+        logger.warning(
+            "Failed to load guard rules from %s: %s",
+            yaml_path,
+            exc,
+        )
         return []
 
 
@@ -186,7 +201,7 @@ def load_rules_from_directory(
     elif rules_dir is not None:
         # Custom directory: load everything
         yaml_files = sorted(directory.glob("*.yaml")) + sorted(
-            directory.glob("*.yml")
+            directory.glob("*.yml"),
         )
     else:
         # Default directory: load only the default subset
@@ -201,6 +216,47 @@ def load_rules_from_directory(
 
     logger.debug("Loaded %d guard rules from %s", len(rules), directory)
     return rules
+
+
+# ---------------------------------------------------------------------------
+# Config-based custom rules
+# ---------------------------------------------------------------------------
+
+
+def _load_config_rules() -> tuple[list[GuardRule], set[str]]:
+    """Load custom rules and disabled rule IDs from config.json.
+
+    Returns ``(custom_rules, disabled_ids)``.
+    """
+    try:
+        from copaw.config import load_config
+
+        cfg = load_config().security.tool_guard
+    except Exception:
+        return [], set()
+
+    disabled = set(cfg.disabled_rules)
+    custom: list[GuardRule] = []
+    for rc in cfg.custom_rules:
+        try:
+            custom.append(
+                GuardRule(
+                    {
+                        "id": rc.id,
+                        "tools": rc.tools,
+                        "params": rc.params,
+                        "category": rc.category,
+                        "severity": rc.severity,
+                        "patterns": rc.patterns,
+                        "exclude_patterns": rc.exclude_patterns,
+                        "description": rc.description,
+                        "remediation": rc.remediation,
+                    },
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Skipping invalid custom rule '%s': %s", rc.id, exc)
+    return custom, disabled
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +283,22 @@ class RuleBasedToolGuardian(BaseToolGuardian):
         extra_rules: list[GuardRule] | None = None,
     ) -> None:
         super().__init__(name="rule_based_tool_guardian")
-        self._rules: list[GuardRule] = load_rules_from_directory(rules_dir)
-        if extra_rules:
-            self._rules.extend(extra_rules)
+        self._rules_dir = rules_dir
+        self._extra_rules = list(extra_rules) if extra_rules else []
+        self._rules: list[GuardRule] = []
+        self._load_all_rules()
+
+    def _load_all_rules(self) -> None:
+        """(Re)load built-in + config custom rules, filtering disabled."""
+        builtin = load_rules_from_directory(self._rules_dir)
+        custom, disabled = _load_config_rules()
+        merged = builtin + self._extra_rules + custom
+        self._rules = [r for r in merged if r.id not in disabled]
+
+    def reload(self) -> None:
+        """Reload rules from YAML + config (called on config change)."""
+        self._load_all_rules()
+        logger.info("Reloaded guard rules: %d active", len(self._rules))
 
     @property
     def rules(self) -> list[GuardRule]:
@@ -251,7 +320,9 @@ class RuleBasedToolGuardian(BaseToolGuardian):
     ) -> list[GuardFinding]:
         """Scan all string-like parameter values against loaded rules."""
         findings: list[GuardFinding] = []
-        applicable_rules = [r for r in self._rules if r.applies_to_tool(tool_name)]
+        applicable_rules = [
+            r for r in self._rules if r.applies_to_tool(tool_name)
+        ]
 
         if not applicable_rules:
             return findings
@@ -267,7 +338,7 @@ class RuleBasedToolGuardian(BaseToolGuardian):
                     continue
                 m, pattern_str = rule.match(value_str)
                 if m:
-                    # Produce a context snippet (up to 120 chars around the match)
+                    # Context snippet around the match
                     start = max(0, m.start() - 40)
                     end = min(len(value_str), m.end() + 40)
                     snippet = value_str[start:end]
@@ -278,7 +349,10 @@ class RuleBasedToolGuardian(BaseToolGuardian):
                             rule_id=rule.id,
                             category=rule.category,
                             severity=rule.severity,
-                            title=f"[{rule.severity.value}] {rule.description}",
+                            title=(
+                                f"[{rule.severity.value}]"
+                                f" {rule.description}"
+                            ),
                             description=(
                                 f"Rule {rule.id} matched parameter "
                                 f"'{param_name}' of tool '{tool_name}'."
@@ -290,6 +364,6 @@ class RuleBasedToolGuardian(BaseToolGuardian):
                             snippet=snippet,
                             remediation=rule.remediation,
                             guardian=self.name,
-                        )
+                        ),
                     )
         return findings

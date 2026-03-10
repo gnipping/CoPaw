@@ -28,6 +28,7 @@ import {
   Box,
   Globe,
   Settings,
+  Shield,
   Plug,
   Wrench,
   PanelLeftClose,
@@ -62,6 +63,7 @@ const KEY_TO_PATH: Record<string, string> = {
   models: "/models",
   environments: "/environments",
   "agent-config": "/agent-config",
+  security: "/security",
 };
 
 const UPDATE_MD: Record<string, string> = {
@@ -338,6 +340,11 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "environments",
           label: t("nav.environments"),
           icon: <Globe size={16} />,
+        },
+        {
+          key: "security",
+          label: t("nav.security"),
+          icon: <Shield size={16} />,
         },
       ],
     },
