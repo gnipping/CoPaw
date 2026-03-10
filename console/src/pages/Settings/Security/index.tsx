@@ -190,7 +190,7 @@ function SecurityPage() {
         .split("\n")
         .map((s: string) => s.trim())
         .filter(Boolean);
-      const excludePatterns = (values.exclude_patterns as string || "")
+      const excludePatterns = ((values.exclude_patterns as string) || "")
         .split("\n")
         .map((s: string) => s.trim())
         .filter(Boolean);
@@ -409,9 +409,7 @@ function SecurityPage() {
         </Card>
 
         <div className={styles.sectionHeader}>
-          <h2 className={styles.sectionTitle}>
-            {t("security.rules.title")}
-          </h2>
+          <h2 className={styles.sectionTitle}>{t("security.rules.title")}</h2>
           <Button
             type="primary"
             icon={<Plus size={14} />}
@@ -422,9 +420,7 @@ function SecurityPage() {
             {t("security.rules.add")}
           </Button>
         </div>
-        <p className={styles.sectionDesc}>
-          {t("security.rules.description")}
-        </p>
+        <p className={styles.sectionDesc}>{t("security.rules.description")}</p>
 
         <Card className={styles.tableCard}>
           <Table
@@ -466,17 +462,16 @@ function SecurityPage() {
           <Form.Item
             label={t("security.rules.ruleId")}
             name="id"
-            rules={[{ required: true, message: t("security.rules.ruleIdRequired") }]}
+            rules={[
+              { required: true, message: t("security.rules.ruleIdRequired") },
+            ]}
           >
             <Input
               placeholder="TOOL_CMD_CUSTOM_RULE"
               disabled={!!editingRule}
             />
           </Form.Item>
-          <Form.Item
-            label={t("security.rules.tools")}
-            name="tools"
-          >
+          <Form.Item label={t("security.rules.tools")} name="tools">
             <Select
               mode="tags"
               options={toolOptions}
@@ -492,15 +487,21 @@ function SecurityPage() {
             />
           </Form.Item>
           <Form.Item label={t("security.rules.severityLabel")} name="severity">
-            <Select options={SEVERITY_OPTIONS.map((s) => ({ label: s, value: s }))} />
+            <Select
+              options={SEVERITY_OPTIONS.map((s) => ({ label: s, value: s }))}
+            />
           </Form.Item>
           <Form.Item label={t("security.rules.categoryLabel")} name="category">
-            <Select options={CATEGORY_OPTIONS.map((c) => ({ label: c, value: c }))} />
+            <Select
+              options={CATEGORY_OPTIONS.map((c) => ({ label: c, value: c }))}
+            />
           </Form.Item>
           <Form.Item
             label={t("security.rules.patterns")}
             name="patterns"
-            rules={[{ required: true, message: t("security.rules.patternsRequired") }]}
+            rules={[
+              { required: true, message: t("security.rules.patternsRequired") },
+            ]}
             tooltip={t("security.rules.patternsTooltip")}
           >
             <Input.TextArea

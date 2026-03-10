@@ -21,8 +21,7 @@ export interface ToolGuardConfig {
 }
 
 export const securityApi = {
-  getToolGuard: () =>
-    request<ToolGuardConfig>("/config/security/tool-guard"),
+  getToolGuard: () => request<ToolGuardConfig>("/config/security/tool-guard"),
 
   updateToolGuard: (body: ToolGuardConfig) =>
     request<ToolGuardConfig>("/config/security/tool-guard", {
