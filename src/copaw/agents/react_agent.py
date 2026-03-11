@@ -692,7 +692,7 @@ class CoPawAgent(ReActAgent):
             f"- Max severity: `{guard_result.max_severity.value}`\n"
             f"- Findings: `{guard_result.findings_count}`\n\n"
             f"{findings_text}\n\n"
-            f"Type `/approve` to allow execution, "
+            f"Type `/daemon approve` to allow execution, "
             f"or send any other message to deny."
         )
 
@@ -756,11 +756,35 @@ class CoPawAgent(ReActAgent):
                 removed,
             )
 
+    def _last_tool_response_is_denied(self) -> bool:
+        """Check if the last message in memory is a guard-denied tool result."""
+        if not self.memory.content:
+            return False
+        msg, marks = self.memory.content[-1]
+        return _TOOL_GUARD_DENIED_MARK in marks and msg.role == "system"
+
     async def _reasoning(
         self,
         tool_choice: Literal["auto", "none", "required"] | None = None,
     ) -> Msg:
-        """Ensure a stable default tool-choice behavior across providers."""
+        """Ensure a stable default tool-choice behavior across providers.
+
+        If the last tool response was denied by the tool guard and is
+        awaiting user approval, short-circuit reasoning and return a
+        static message so the agent pauses until the user responds.
+        """
+        if self._last_tool_response_is_denied():
+            msg = Msg(
+                self.name,
+                "This tool needs user approval, please type "
+                "/approve to allow execution, "
+                "or send any other message to deny.",
+                "assistant",
+            )
+            await self.print(msg, True)
+            await self.memory.add(msg)
+            return msg
+
         tool_choice = normalize_reasoning_tool_choice(
             tool_choice=tool_choice,
             has_tools=bool(self.toolkit.get_json_schemas()),
