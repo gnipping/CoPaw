@@ -159,12 +159,18 @@ class ApprovalService:
         self,
         session_id: str,
         tool_name: str,
+        tool_params: dict[str, Any] | None = None,
     ) -> bool:
         """Check and consume a one-shot tool approval.
 
         If *tool_name* was recently approved via ``/daemon approve``
         for *session_id*, remove the completed record and return
         ``True`` so the caller can skip the guard check.
+
+        When *tool_params* is given, the approved call's stored
+        parameters are compared.  A mismatch causes the approval
+        to be rejected (returns ``False``), preventing an approved
+        ``rm foo.txt`` from being used to execute ``rm -rf /``.
         """
         async with self._lock:
             for key, completed in list(self._completed.items()):
@@ -173,6 +179,25 @@ class ApprovalService:
                     and completed.tool_name == tool_name
                     and completed.status == "approved"
                 ):
+                    if tool_params is not None:
+                        approved_call = completed.extra.get(
+                            "tool_call",
+                            {},
+                        )
+                        approved_params = approved_call.get(
+                            "input",
+                            {},
+                        )
+                        if approved_params != tool_params:
+                            logger.warning(
+                                "Tool guard: params mismatch for "
+                                "'%s' (session %s), rejecting "
+                                "stale approval",
+                                tool_name,
+                                session_id[:8],
+                            )
+                            del self._completed[key]
+                            return False
                     del self._completed[key]
                     return True
         return False

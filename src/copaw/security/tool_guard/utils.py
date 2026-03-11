@@ -21,11 +21,6 @@ _DEFAULT_GUARDED_TOOLS = frozenset(
     },
 )
 
-# Optional test/runtime overrides. When set to a string value, these
-# take precedence over process environment variables.
-TOOL_GUARD_TOOLS_ENV: str | None = None
-TOOL_GUARD_DENIED_TOOLS_ENV: str | None = None
-
 
 def _parse_guarded_tokens(tokens: Iterable[str]) -> set[str] | None:
     """Parse guarded tool tokens into scope set.
@@ -77,11 +72,7 @@ def resolve_guarded_tools(
     if user_defined is not None:
         return _parse_guarded_tokens(user_defined)
 
-    raw = (
-        TOOL_GUARD_TOOLS_ENV
-        if TOOL_GUARD_TOOLS_ENV is not None
-        else os.environ.get("COPAW_TOOL_GUARD_TOOLS")
-    )
+    raw = os.environ.get("COPAW_TOOL_GUARD_TOOLS")
     if raw is not None:
         normalized = raw.strip().lower()
         if normalized in {"*", "all"}:
@@ -116,11 +107,7 @@ def resolve_denied_tools(
     if user_defined is not None:
         return set(user_defined)
 
-    raw = (
-        TOOL_GUARD_DENIED_TOOLS_ENV
-        if TOOL_GUARD_DENIED_TOOLS_ENV is not None
-        else os.environ.get("COPAW_TOOL_GUARD_DENIED_TOOLS")
-    )
+    raw = os.environ.get("COPAW_TOOL_GUARD_DENIED_TOOLS")
     if raw is not None:
         return {t.strip() for t in raw.split(",") if t.strip()}
 
@@ -132,11 +119,13 @@ def resolve_denied_tools(
 
 
 def log_findings(tool_name: str, result: "ToolGuardResult") -> None:
-    """Emit structured warning logs for each finding."""
+    """Emit structured logs for each finding."""
     from .models import GuardSeverity
 
+    _HIGH_SEVERITIES = (GuardSeverity.CRITICAL, GuardSeverity.HIGH)
+
     for finding in result.findings:
-        if finding.severity in (GuardSeverity.CRITICAL, GuardSeverity.HIGH):
+        if finding.severity in _HIGH_SEVERITIES:
             log_fn = logger.warning
         else:
             log_fn = logger.info
@@ -151,7 +140,12 @@ def log_findings(tool_name: str, result: "ToolGuardResult") -> None:
             finding.matched_value,
         )
 
-    logger.warning(
+    summary_fn = (
+        logger.warning
+        if result.max_severity in _HIGH_SEVERITIES
+        else logger.info
+    )
+    summary_fn(
         "[TOOL GUARD] Summary for tool '%s': %d finding(s), "
         "max_severity=%s, duration=%.3fs",
         tool_name,

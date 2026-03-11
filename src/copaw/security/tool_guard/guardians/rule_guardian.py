@@ -358,7 +358,7 @@ class RuleBasedToolGuardian(BaseToolGuardian):
 
                     findings.append(
                         GuardFinding(
-                            id=f"GUARD-{uuid.uuid4().hex[:8]}",
+                            id=f"GUARD-{uuid.uuid4().hex}",
                             rule_id=rule.id,
                             category=rule.category,
                             severity=rule.severity,

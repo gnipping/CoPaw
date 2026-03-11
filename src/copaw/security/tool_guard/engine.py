@@ -74,6 +74,8 @@ class ToolGuardEngine:
         else:
             self._guardians = self._default_guardians()
 
+        self._reload_tool_sets()
+
     # ------------------------------------------------------------------
     # Default guardians
     # ------------------------------------------------------------------
@@ -118,11 +120,39 @@ class ToolGuardEngine:
     def enabled(self, value: bool) -> None:
         self._enabled = value
 
+    @property
+    def guarded_tools(self) -> set[str] | None:
+        """Tools in the guard scope.  ``None`` means guard all tools."""
+        return self._guarded_tools
+
+    @property
+    def denied_tools(self) -> set[str]:
+        """Tools unconditionally denied (no approval offered)."""
+        return self._denied_tools
+
+    def _reload_tool_sets(self) -> None:
+        """Refresh guarded and denied tool sets from config."""
+        from .utils import resolve_denied_tools, resolve_guarded_tools
+
+        self._guarded_tools: set[str] | None = resolve_guarded_tools()
+        self._denied_tools: set[str] = resolve_denied_tools()
+
     def reload_rules(self) -> None:
-        """Ask all guardians that support reload to refresh their rules."""
+        """Reload guardian rules and refresh guarded/denied tool sets."""
         for g in self._guardians:
             if hasattr(g, "reload"):
                 g.reload()
+        self._reload_tool_sets()
+
+    def is_denied(self, tool_name: str) -> bool:
+        """``True`` when *tool_name* is unconditionally denied."""
+        return tool_name in self._denied_tools
+
+    def is_guarded(self, tool_name: str) -> bool:
+        """``True`` when *tool_name* falls within the guard scope."""
+        if self._guarded_tools is None:
+            return True
+        return tool_name in self._guarded_tools
 
     # ------------------------------------------------------------------
     # Core interface

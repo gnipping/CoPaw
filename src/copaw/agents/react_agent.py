@@ -21,6 +21,7 @@ from .command_handler import CommandHandler
 from .hooks import BootstrapHook, MemoryCompactionHook
 from .model_factory import create_model_and_formatter
 from .prompt import build_system_prompt_from_working_dir
+from .tool_guard_mixin import ToolGuardMixin
 from .skills_manager import (
     ensure_skills_initialized,
     get_working_skills_dir,
@@ -45,7 +46,6 @@ from ..constant import (
     MEMORY_COMPACT_RATIO,
     WORKING_DIR,
 )
-from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +53,7 @@ logger = logging.getLogger(__name__)
 NamesakeStrategy = Literal["override", "skip", "raise", "rename"]
 
 
-def normalize_reasoning_tool_choice(
-    tool_choice: Literal["auto", "none", "required"] | None,
-    has_tools: bool,
-) -> Literal["auto", "none", "required"] | None:
-    """Normalize tool_choice for reasoning to reduce provider variance."""
-    if tool_choice is None and has_tools:
-        return "auto"
-    return tool_choice
-
-
-class CoPawAgent(ReActAgent):
+class CoPawAgent(ToolGuardMixin, ReActAgent):
     """CoPaw Agent with integrated tools, skills, and memory management.
 
     This agent extends ReActAgent with:
@@ -72,6 +62,15 @@ class CoPawAgent(ReActAgent):
     - Memory management with auto-compaction
     - Bootstrap guidance for first-time setup
     - System command handling (/compact, /new, etc.)
+    - Tool-guard security interception (via ToolGuardMixin)
+
+    MRO note
+    ~~~~~~~~
+    ``ToolGuardMixin`` overrides ``_acting`` and ``_reasoning`` via
+    Python's MRO: CoPawAgent → ToolGuardMixin → ReActAgent.  If you
+    add a ``_acting`` or ``_reasoning`` override in this class, you
+    **must** call ``super()._acting(...)`` / ``super()._reasoning(...)``
+    so the guard interception remains active.
     """
 
     def __init__(
@@ -495,324 +494,6 @@ class CoPawAgent(ReActAgent):
             return rebuilt_client
         except Exception:  # pylint: disable=broad-except
             return None
-
-    # ------------------------------------------------------------------
-    # Tool-guard: override _acting to check before execution
-    # ------------------------------------------------------------------
-
-    def _init_tool_guard(self) -> None:
-        """Lazy-init tool-guard components (called once on first _acting)."""
-        from copaw.security.tool_guard.engine import get_guard_engine
-        from copaw.security.tool_guard.utils import (
-            resolve_guarded_tools,
-            resolve_denied_tools,
-        )
-        from copaw.app.approvals import get_approval_service
-
-        self._tool_guard_engine = get_guard_engine()
-        self._tool_guard_guarded_tools = resolve_guarded_tools()
-        self._tool_guard_denied_tools: set[str] = resolve_denied_tools()
-        self._tool_guard_approval_service = get_approval_service()
-        self._tool_guard_pending_info: dict | None = None
-
-    def _should_guard_tool(self, tool_name: str) -> bool:
-        """Check if *tool_name* is in the guarded scope."""
-        if self._tool_guard_guarded_tools is None:
-            return True  # None means guard ALL tools
-        return tool_name in self._tool_guard_guarded_tools
-
-    def _should_require_approval(self) -> bool:
-        """True when the current session can use the /daemon approve flow.
-
-        Approval is requested as long as a ``session_id`` is available
-        so the runner can match the subsequent ``/daemon approve``
-        message to the correct pending record.
-        """
-        return bool(self._request_context.get("session_id"))
-
-    async def _acting(self, tool_call) -> dict | None:  # noqa: C901
-        """Override to intercept sensitive tool calls before execution.
-
-        1. Check for a one-shot pre-approval (from a prior
-           ``/daemon approve``). If found, skip the guard.
-        2. Run ToolGuardEngine on the tool parameters.
-        3. If findings exist:
-           a. If tool is in *denied_tools*, auto-deny immediately
-              (no approval offered).
-           b. Otherwise, enter the approval flow so the user can
-              type ``/daemon approve`` to allow execution.
-        4. If no guard needed, delegate to ``super()._acting``.
-        """
-        if not hasattr(self, "_tool_guard_engine"):
-            self._init_tool_guard()
-
-        tool_name: str = tool_call.get("name", "")
-        tool_input: dict = tool_call.get("input", {})
-
-        try:
-            if tool_name and self._should_guard_tool(tool_name):
-                session_id = str(
-                    self._request_context.get("session_id") or "",
-                )
-                if session_id:
-                    consumed = (
-                        await (
-                            self._tool_guard_approval_service.consume_approval(
-                                session_id,
-                                tool_name,
-                            )
-                        )
-                    )
-                    if consumed:
-                        logger.info(
-                            "Tool guard: pre-approved call for '%s' "
-                            "(session %s), skipping guard",
-                            tool_name,
-                            session_id[:8],
-                        )
-                        self._tool_guard_pending_info = None
-                        await self._cleanup_tool_guard_denied_messages(
-                            include_denial_response=True,
-                        )
-                        return await super()._acting(tool_call)
-
-                result = self._tool_guard_engine.guard(tool_name, tool_input)
-                if result is not None and result.findings:
-                    from copaw.security.tool_guard.utils import log_findings
-
-                    log_findings(tool_name, result)
-
-                    if tool_name in self._tool_guard_denied_tools:
-                        logger.warning(
-                            "Tool guard: tool '%s' is in the denied "
-                            "set, auto-denying",
-                            tool_name,
-                        )
-                        return await self._acting_auto_denied(
-                            tool_call,
-                            tool_name,
-                            result,
-                        )
-
-                    if self._should_require_approval():
-                        return await self._acting_with_approval(
-                            tool_call,
-                            tool_name,
-                            result,
-                        )
-                    # No session_id (CLI): log only, allow execution.
-        except Exception as exc:
-            logger.warning(
-                "Tool guard check encountered an error (non-blocking): %s",
-                exc,
-                exc_info=True,
-            )
-
-        return await super()._acting(tool_call)
-
-    async def _acting_auto_denied(
-        self,
-        tool_call,
-        tool_name: str,
-        guard_result,
-    ) -> dict | None:
-        """Auto-deny a tool call without offering approval.
-
-        Used for tools in the *denied_tools* set when the guard engine
-        detects risk.  The tool result is injected into memory so the
-        LLM can see the denial, but no pending-approval record is
-        created — the user cannot override via ``/daemon approve``.
-        """
-        from agentscope.message import ToolResultBlock
-        from copaw.security.tool_guard.approval import format_findings_summary
-
-        findings_text = format_findings_summary(guard_result)
-        denied_text = (
-            f"⛔ **Tool Blocked / 工具已拦截**\n\n"
-            f"- Tool / 工具: `{tool_name}`\n"
-            f"- Severity / 严重性: `{guard_result.max_severity.value}`\n"
-            f"- Findings / 发现: `{guard_result.findings_count}`\n\n"
-            f"{findings_text}\n\n"
-            f"This tool is blocked and cannot be approved.\n"
-            f"该工具已被禁止，无法批准执行。"
-        )
-
-        tool_res_msg = Msg(
-            "system",
-            [
-                ToolResultBlock(
-                    type="tool_result",
-                    id=tool_call["id"],
-                    name=tool_name,
-                    output=[{"type": "text", "text": denied_text}],
-                ),
-            ],
-            "system",
-        )
-
-        await self.print(tool_res_msg, True)
-        await self.memory.add(tool_res_msg)
-        return None
-
-    async def _acting_with_approval(
-        self,
-        tool_call,
-        tool_name: str,
-        guard_result,
-    ) -> dict | None:
-        """Deny the tool call and record a pending approval.
-
-        The agent loop continues with a "denied" tool result so the
-        LLM can inform the user about the risk.  The user can later
-        type ``/daemon approve`` to grant a one-shot approval; the
-        LLM will then re-call the tool and the guard check will be
-        skipped via ``consume_approval``.
-        """
-        from agentscope.message import ToolResultBlock
-        from copaw.security.tool_guard.approval import format_findings_summary
-
-        channel = str(self._request_context.get("channel") or "")
-
-        for msg, marks in reversed(self.memory.content):
-            if msg.role == "assistant":
-                if TOOL_GUARD_DENIED_MARK not in marks:
-                    marks.append(TOOL_GUARD_DENIED_MARK)
-                break
-
-        await self._tool_guard_approval_service.create_pending(
-            session_id=str(self._request_context.get("session_id") or ""),
-            user_id=str(self._request_context.get("user_id") or ""),
-            channel=channel,
-            tool_name=tool_name,
-            result=guard_result,
-            extra={"tool_call": tool_call},
-        )
-
-        self._tool_guard_pending_info = {
-            "tool_name": tool_name,
-            "tool_input": tool_call.get("input", {}),
-        }
-
-        findings_text = format_findings_summary(guard_result)
-        denied_text = (
-            f"⚠️ **Risk Detected / 检测到风险**\n\n"
-            f"- Tool / 工具: `{tool_name}`\n"
-            f"- Severity / 严重性: `{guard_result.max_severity.value}`\n"
-            f"- Findings / 发现: `{guard_result.findings_count}`\n\n"
-            f"{findings_text}\n\n"
-            f"Type `/approve` to approve, "
-            f"or send any message to deny.\n"
-            f"输入 `/approve` 批准执行，或发送任意消息拒绝。"
-        )
-
-        tool_res_msg = Msg(
-            "system",
-            [
-                ToolResultBlock(
-                    type="tool_result",
-                    id=tool_call["id"],
-                    name=tool_name,
-                    output=[{"type": "text", "text": denied_text}],
-                ),
-            ],
-            "system",
-        )
-
-        await self.print(tool_res_msg, True)
-        await self.memory.add(
-            tool_res_msg,
-            marks=TOOL_GUARD_DENIED_MARK,
-        )
-        return None
-
-    async def _cleanup_tool_guard_denied_messages(
-        self,
-        include_denial_response: bool = True,
-    ) -> None:
-        """Remove tool-guard denied messages from memory.
-
-        Finds messages marked with ``TOOL_GUARD_DENIED_MARK`` and
-        removes them.  When *include_denial_response* is ``True``,
-        also removes the assistant message immediately following the
-        last marked message (the LLM's denial explanation).
-
-        Args:
-            include_denial_response: If ``True``, also remove the
-                assistant denial-text response that follows the
-                denied tool result.
-        """
-        ids_to_delete: list[str] = []
-        last_marked_idx = -1
-
-        for i, (msg, marks) in enumerate(self.memory.content):
-            if TOOL_GUARD_DENIED_MARK in marks:
-                ids_to_delete.append(msg.id)
-                last_marked_idx = i
-
-        if (
-            include_denial_response
-            and last_marked_idx >= 0
-            and last_marked_idx + 1 < len(self.memory.content)
-        ):
-            next_msg, _ = self.memory.content[last_marked_idx + 1]
-            if next_msg.role == "assistant":
-                ids_to_delete.append(next_msg.id)
-
-        if ids_to_delete:
-            removed = await self.memory.delete(ids_to_delete)
-            logger.info(
-                "Tool guard: cleaned up %d denied message(s) from memory",
-                removed,
-            )
-
-    def _last_tool_response_is_denied(self) -> bool:
-        """Check if the last message is a guard-denied tool result."""
-        if not self.memory.content:
-            return False
-        msg, marks = self.memory.content[-1]
-        return TOOL_GUARD_DENIED_MARK in marks and msg.role == "system"
-
-    async def _reasoning(
-        self,
-        tool_choice: Literal["auto", "none", "required"] | None = None,
-    ) -> Msg:
-        """Ensure a stable default tool-choice behavior across providers.
-
-        If the last tool response was denied by the tool guard and is
-        awaiting user approval, short-circuit reasoning and return a
-        static message so the agent pauses until the user responds.
-        """
-        if self._last_tool_response_is_denied():
-            pending = getattr(self, "_tool_guard_pending_info", None) or {}
-            tool_name = pending.get("tool_name", "unknown")
-            tool_input = pending.get("tool_input", {})
-            import json as _json
-
-            params_text = _json.dumps(
-                tool_input,
-                ensure_ascii=False,
-                indent=2,
-            )
-            msg = Msg(
-                self.name,
-                "⏳ Waiting for approval / 等待审批\n\n"
-                f"- Tool / 工具: `{tool_name}`\n"
-                f"- Parameters / 参数:\n```json\n{params_text}\n```\n\n"
-                "Type `/approve` to approve, "
-                "or send any message to deny.\n"
-                "输入 `/approve` 批准执行，或发送任意消息拒绝。",
-                "assistant",
-            )
-            await self.print(msg, True)
-            await self.memory.add(msg)
-            return msg
-
-        tool_choice = normalize_reasoning_tool_choice(
-            tool_choice=tool_choice,
-            has_tools=bool(self.toolkit.get_json_schemas()),
-        )
-
-        return await super()._reasoning(tool_choice=tool_choice)
 
     async def reply(
         self,
