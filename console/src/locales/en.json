@@ -584,7 +584,11 @@
       "actionLabel": "Action",
       "actionApproval": "Require Approval",
       "allTools": "All tools",
-      "allParams": "All parameters"
+      "allParams": "All parameters",
+      "descriptions": {
+        "TOOL_CMD_DANGEROUS_RM": "Detects 'rm' command that may cause data loss",
+        "TOOL_CMD_DANGEROUS_MV": "Detects 'mv' command that may move or overwrite files unexpectedly"
+      }
     }
   }
 }

@@ -693,9 +693,9 @@ class CoPawAgent(ReActAgent):
             f"- Severity / 严重性: `{guard_result.max_severity.value}`\n"
             f"- Findings / 发现: `{guard_result.findings_count}`\n\n"
             f"{findings_text}\n\n"
-            f"Type `/daemon approve` to approve, "
+            f"Type `/approve` to approve, "
             f"or send any message to deny.\n"
-            f"输入 `/daemon approve` 批准执行，或发送任意消息拒绝。"
+            f"输入 `/approve` 批准执行，或发送任意消息拒绝。"
         )
 
         tool_res_msg = Msg(
@@ -779,9 +779,9 @@ class CoPawAgent(ReActAgent):
             msg = Msg(
                 self.name,
                 "⏳ Waiting for approval / 等待审批\n\n"
-                "Type `/daemon approve` to approve, "
+                "Type `/approve` to approve, "
                 "or send any message to deny.\n"
-                "输入 `/daemon approve` 批准执行，或发送任意消息拒绝。",
+                "输入 `/approve` 批准执行，或发送任意消息拒绝。",
                 "assistant",
             )
             await self.print(msg, True)

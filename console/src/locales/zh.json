@@ -584,7 +584,11 @@
       "actionLabel": "触发行为",
       "actionApproval": "等待审批",
       "allTools": "所有工具",
-      "allParams": "所有参数"
+      "allParams": "所有参数",
+      "descriptions": {
+        "TOOL_CMD_DANGEROUS_RM": "检测可能导致数据丢失的 rm 命令",
+        "TOOL_CMD_DANGEROUS_MV": "检测可能意外移动或覆盖文件的 mv 命令"
+      }
     }
   }
 }

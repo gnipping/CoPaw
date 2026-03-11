@@ -270,17 +270,22 @@ function SecurityPage() {
       title: t("security.rules.descriptionCol"),
       dataIndex: "description",
       key: "description",
-      render: (text: string, record: MergedRule) => (
-        <span
-          style={{
-            opacity: record.disabled ? 0.4 : 1,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {text}
-        </span>
-      ),
+      render: (_text: string, record: MergedRule) => {
+        const i18nKey = `security.rules.descriptions.${record.id}`;
+        const translated = t(i18nKey, { defaultValue: "" });
+        const display = translated || record.description;
+        return (
+          <span
+            style={{
+              opacity: record.disabled ? 0.4 : 1,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {display}
+          </span>
+        );
+      },
     },
     {
       title: t("security.rules.source"),
@@ -576,10 +581,6 @@ function SecurityPage() {
               </Tag>
             </p>
             <p>
-              <strong>{t("security.rules.categoryLabel")}:</strong>{" "}
-              {previewRule.category}
-            </p>
-            <p>
               <strong>{t("security.rules.tools")}:</strong>{" "}
               {previewRule.tools.length > 0
                 ? previewRule.tools.join(", ")
@@ -597,7 +598,9 @@ function SecurityPage() {
             </p>
             <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
               <strong>{t("security.rules.descriptionLabel")}:</strong>{" "}
-              {previewRule.description}
+              {t(`security.rules.descriptions.${previewRule.id}`, {
+                defaultValue: "",
+              }) || previewRule.description}
             </p>
             <p>
               <strong>{t("security.rules.patterns")}:</strong>
@@ -628,12 +631,6 @@ function SecurityPage() {
                   {previewRule.exclude_patterns.join("\n")}
                 </pre>
               </>
-            )}
-            {previewRule.remediation && (
-              <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                <strong>{t("security.rules.remediationLabel")}:</strong>{" "}
-                {previewRule.remediation}
-              </p>
             )}
           </div>
         )}
