@@ -787,7 +787,9 @@ class CoPawAgent(ReActAgent):
             import json as _json
 
             params_text = _json.dumps(
-                tool_input, ensure_ascii=False, indent=2,
+                tool_input,
+                ensure_ascii=False,
+                indent=2,
             )
             msg = Msg(
                 self.name,
