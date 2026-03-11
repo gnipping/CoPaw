@@ -511,6 +511,7 @@ class CoPawAgent(ReActAgent):
         self._tool_guard_guarded_tools = resolve_guarded_tools()
         self._tool_guard_denied_tools: set[str] = resolve_denied_tools()
         self._tool_guard_approval_service = get_approval_service()
+        self._tool_guard_pending_info: dict | None = None
 
     def _should_guard_tool(self, tool_name: str) -> bool:
         """Check if *tool_name* is in the guarded scope."""
@@ -567,6 +568,7 @@ class CoPawAgent(ReActAgent):
                             tool_name,
                             session_id[:8],
                         )
+                        self._tool_guard_pending_info = None
                         await self._cleanup_tool_guard_denied_messages(
                             include_denial_response=True,
                         )
@@ -684,6 +686,11 @@ class CoPawAgent(ReActAgent):
             extra={"tool_call": tool_call},
         )
 
+        self._tool_guard_pending_info = {
+            "tool_name": tool_name,
+            "tool_input": tool_call.get("input", {}),
+        }
+
         findings_text = format_findings_summary(guard_result)
         denied_text = (
             f"⚠️ **Risk Detected / 检测到风险**\n\n"
@@ -774,9 +781,19 @@ class CoPawAgent(ReActAgent):
         static message so the agent pauses until the user responds.
         """
         if self._last_tool_response_is_denied():
+            pending = getattr(self, "_tool_guard_pending_info", None) or {}
+            tool_name = pending.get("tool_name", "unknown")
+            tool_input = pending.get("tool_input", {})
+            import json as _json
+
+            params_text = _json.dumps(
+                tool_input, ensure_ascii=False, indent=2,
+            )
             msg = Msg(
                 self.name,
                 "⏳ Waiting for approval / 等待审批\n\n"
+                f"- Tool / 工具: `{tool_name}`\n"
+                f"- Parameters / 参数:\n```json\n{params_text}\n```\n\n"
                 "Type `/approve` to approve, "
                 "or send any message to deny.\n"
                 "输入 `/approve` 批准执行，或发送任意消息拒绝。",
