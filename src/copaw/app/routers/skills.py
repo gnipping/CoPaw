@@ -254,7 +254,7 @@ async def batch_disable_skills(
 async def batch_enable_skills(
     skill_name: list[str],
     request: Request,
-):
+) -> JSONResponse | None:
     from ..agent_context import get_agent_for_request
 
     workspace = await get_agent_for_request(request)
@@ -284,6 +284,7 @@ async def batch_enable_skills(
                 "blocked_skills": blocked,
             },
         )
+    return None
 
 
 @router.post("")

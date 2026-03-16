@@ -141,11 +141,13 @@ export function useSkills() {
       try {
         const alerts: BlockedSkillRecord[] = await api.getBlockedHistory();
         if (!alerts.length) return;
-        const latest = alerts[alerts.length - 1];
-        if (latest.action === "warned" && latest.skill_name === skillName) {
+        const latestForSkill = alerts
+          .filter((a) => a.skill_name === skillName && a.action === "warned")
+          .pop();
+        if (latestForSkill) {
           Modal.warning({
             title: t("security.skillScanner.scanError.title"),
-            content: `${skillName}: ${latest.findings.length} ${t(
+            content: `${skillName}: ${latestForSkill.findings.length} ${t(
               "security.skillScanner.scanAlerts.findings",
             ).toLowerCase()}`,
           });
