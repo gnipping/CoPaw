@@ -57,7 +57,8 @@ class SecurityRule:
         self.severity = Severity(rule_data["severity"])
         self.patterns: list[str] = rule_data["patterns"]
         self.exclude_patterns: list[str] = rule_data.get(
-            "exclude_patterns", []
+            "exclude_patterns",
+            [],
         )
         self.file_types: list[str] = rule_data.get("file_types", [])
         self.description: str = rule_data["description"]
@@ -76,7 +77,9 @@ class SecurityRule:
                 self.compiled_exclude_patterns.append(re.compile(pat))
             except re.error as exc:
                 logger.warning(
-                    "Bad exclude regex in rule %s: %s", self.id, exc
+                    "Bad exclude regex in rule %s: %s",
+                    self.id,
+                    exc,
                 )
 
     # ------------------------------------------------------------------
@@ -177,7 +180,7 @@ class RuleLoader:
                         data = yaml.safe_load(fh)
                 except Exception as exc:
                     raise RuntimeError(
-                        f"Failed to load {yaml_file}: {exc}"
+                        f"Failed to load {yaml_file}: {exc}",
                     ) from exc
                 if not isinstance(data, list):
                     raise RuntimeError(f"Expected list in {yaml_file}")
@@ -201,11 +204,13 @@ class RuleLoader:
                 self.rules.append(rule)
                 self.rules_by_id[rule.id] = rule
                 self.rules_by_category.setdefault(rule.category, []).append(
-                    rule
+                    rule,
                 )
             except Exception as exc:
                 logger.warning(
-                    "Skipping rule %s: %s", entry.get("id", "?"), exc
+                    "Skipping rule %s: %s",
+                    entry.get("id", "?"),
+                    exc,
                 )
 
         return self.rules
@@ -217,7 +222,8 @@ class RuleLoader:
         return [r for r in self.rules if r.matches_file_type(file_type)]
 
     def get_rules_for_category(
-        self, category: ThreatCategory
+        self,
+        category: ThreatCategory,
     ) -> list[SecurityRule]:
         return self.rules_by_category.get(category, [])
 
@@ -293,7 +299,8 @@ class PatternAnalyzer(BaseAnalyzer):
                         continue
 
                 matches = rule.scan_content(
-                    content, file_path=sf.relative_path
+                    content,
+                    file_path=sf.relative_path,
                 )
                 for match in matches:
                     # Apply severity override if configured

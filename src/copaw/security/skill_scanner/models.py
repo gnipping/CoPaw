@@ -176,7 +176,7 @@ class ScanResult:
     analyzers_used: list[str] = field(default_factory=list)
     analyzers_failed: list[dict[str, str]] = field(default_factory=list)
     timestamp: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(timezone.utc),
     )
 
     # ------------------------------------------------------------------
@@ -212,7 +212,8 @@ class ScanResult:
         return [f for f in self.findings if f.severity == severity]
 
     def get_findings_by_category(
-        self, category: ThreatCategory
+        self,
+        category: ThreatCategory,
     ) -> list[Finding]:
         return [f for f in self.findings if f.category == category]
 

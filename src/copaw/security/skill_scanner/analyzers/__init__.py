@@ -32,7 +32,10 @@ class BaseAnalyzer(ABC):
     """
 
     def __init__(
-        self, name: str, *, policy: "ScanPolicy | None" = None
+        self,
+        name: str,
+        *,
+        policy: "ScanPolicy | None" = None,
     ) -> None:
         self.name = name
         # Lazily import to avoid circular dependencies
