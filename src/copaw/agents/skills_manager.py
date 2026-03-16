@@ -542,6 +542,11 @@ class SkillService:
         return skill_dir if skill_dir.exists() else None
 
     @staticmethod
+    def get_customized_skill_dir(name: str) -> Path | None:
+        """Public wrapper for accessing a customized skill directory."""
+        return SkillService._get_customized_skill_dir(name)
+
+    @staticmethod
     def list_all_skills() -> list[SkillInfo]:
         """
         List all skills from builtin and customized directories.
