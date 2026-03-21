@@ -171,6 +171,49 @@ class ApprovalService:
                 if p.session_id == session_id and p.status == "pending"
             ]
 
+    async def cancel_stale_pending_for_tool_call(
+        self,
+        session_id: str,
+        tool_call_id: str,
+    ) -> int:
+        """Cancel pending approvals whose stored tool_call id matches.
+
+        When a tool call is replayed (e.g. after ``/approve`` triggers
+        sibling replay), the guard may create a *new* pending for the
+        same logical tool call.  This method cancels the old pending
+        first so orphaned records don't accumulate.
+
+        Returns the number of records cancelled.
+        """
+        now = time.time()
+        cancelled = 0
+        async with self._lock:
+            to_cancel = [
+                k
+                for k, p in self._pending.items()
+                if p.session_id == session_id
+                and p.status == "pending"
+                and isinstance(p.extra.get("tool_call"), dict)
+                and p.extra["tool_call"].get("id") == tool_call_id
+            ]
+            for k in to_cancel:
+                pending = self._pending.pop(k)
+                if not pending.future.done():
+                    pending.future.set_result(ApprovalDecision.TIMEOUT)
+                pending.status = "superseded"
+                pending.resolved_at = now
+                self._completed[k] = pending
+                cancelled += 1
+        if cancelled:
+            logger.info(
+                "Tool guard: cancelled %d stale pending approval(s) "
+                "for tool_call %s (session %s)",
+                cancelled,
+                tool_call_id,
+                session_id[:8],
+            )
+        return cancelled
+
     async def consume_approval(
         self,
         session_id: str,

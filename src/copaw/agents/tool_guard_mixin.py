@@ -465,10 +465,19 @@ class ToolGuardMixin:
             if siblings:
                 extra["sibling_tool_calls"] = siblings
 
-        await self._tool_guard_approval_service.create_pending(
-            session_id=str(
-                self._request_context.get("session_id") or "",
-            ),
+        session_id = str(
+            self._request_context.get("session_id") or "",
+        )
+        tool_call_id = tool_call.get("id", "")
+        svc = self._tool_guard_approval_service
+        if session_id and tool_call_id:
+            await svc.cancel_stale_pending_for_tool_call(
+                session_id,
+                tool_call_id,
+            )
+
+        await svc.create_pending(
+            session_id=session_id,
             user_id=str(
                 self._request_context.get("user_id") or "",
             ),
