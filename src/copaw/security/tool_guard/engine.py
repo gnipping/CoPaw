@@ -170,6 +170,8 @@ class ToolGuardEngine:
         self,
         tool_name: str,
         params: dict[str, Any],
+        *,
+        only_always_run: bool = False,
     ) -> ToolGuardResult | None:
         """Guard a tool call's parameters.
 
@@ -179,6 +181,10 @@ class ToolGuardEngine:
             Name of the tool being called.
         params:
             Keyword arguments that will be passed to the tool function.
+        only_always_run:
+            When ``True``, only guardians with ``always_run=True`` are
+            executed.  Used for tools outside the guarded scope that
+            still need path-level checks.
 
         Returns
         -------
@@ -194,7 +200,13 @@ class ToolGuardEngine:
             params=params,
         )
 
-        for guardian in self._guardians:
+        guardians = (
+            [g for g in self._guardians if g.always_run]
+            if only_always_run
+            else self._guardians
+        )
+
+        for guardian in guardians:
             try:
                 findings = guardian.guard(tool_name, params)
                 result.findings.extend(findings)

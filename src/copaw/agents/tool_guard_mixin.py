@@ -251,8 +251,10 @@ class ToolGuardMixin:
         """Intercept sensitive tool calls before execution.
 
         1. If tool is in *denied_tools*, auto-deny unconditionally.
-        2. Check for a one-shot pre-approval.
-        3. If tool is in the guarded scope, run ToolGuardEngine.
+        2. If tool is in the guarded scope, check for a one-shot
+           pre-approval, then run all guardians.
+        3. For non-guarded tools, run only ``always_run`` guardians
+           (e.g. sensitive file path checks).
         4. If findings exist, enter the approval flow.
         5. Otherwise, delegate to ``super()._acting``.
 
@@ -325,17 +327,20 @@ class ToolGuardMixin:
                 guard_result=denied_result,
             )
 
-        if not engine.is_guarded(tool_name):
-            return None
+        guarded = engine.is_guarded(tool_name)
 
-        if await self._consume_preapproval(tool_name, tool_input):
+        if guarded and await self._consume_preapproval(tool_name, tool_input):
             self._tool_guard_pending_info = None
             await self._cleanup_tool_guard_denied_messages(
                 include_denial_response=True,
             )
             return _GuardAction("preapproved", tool_name, tool_input)
 
-        guard_result = engine.guard(tool_name, tool_input)
+        guard_result = engine.guard(
+            tool_name,
+            tool_input,
+            only_always_run=not guarded,
+        )
         if guard_result is not None and guard_result.findings:
             from copaw.security.tool_guard.utils import log_findings
 

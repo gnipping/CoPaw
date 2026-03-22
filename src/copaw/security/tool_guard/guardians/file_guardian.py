@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ....config.context import get_current_workspace_dir
-from ....constant import WORKING_DIR
+from ....constant import SECRET_DIR, WORKING_DIR
 from ..models import GuardFinding, GuardSeverity, GuardThreatCategory
 from . import BaseToolGuardian
 
@@ -27,10 +27,14 @@ _TOOL_FILE_PARAMS: dict[str, tuple[str, ...]] = {
     "write_text_file": ("file_path", "path"),
 }
 
-_TOOL_DENY_FILES: list[str] = ["/Users/gnip-tongyi/.copaw/test_file_access/"]
+_DEFAULT_DENY_DIRS: list[str] = [str(SECRET_DIR) + "/"]
 
 _SHELL_REDIRECT_OPERATORS = frozenset(
     {">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", "<", "<<", "<<<"},
+)
+# Longest-first for startswith: avoids `>` matching before `>>`.
+_REDIRECT_OPS_BY_LEN = tuple(
+    sorted(_SHELL_REDIRECT_OPERATORS, key=len, reverse=True),
 )
 
 
@@ -47,24 +51,55 @@ def _normalize_path(raw_path: str) -> str:
     return str(p.resolve(strict=False))
 
 
-def _load_sensitive_files_from_config() -> list[str]:
-    """Load ``security.tool_guard.sensitive_files`` from config.json."""
+def _is_file_guard_enabled() -> bool:
+    """Check ``security.file_guard.enabled`` from config."""
     try:
         from copaw.config import load_config
 
-        cfg = load_config().security.tool_guard
-        configured = list(getattr(cfg, "sensitive_files", []) or [])
-        return [*list(_TOOL_DENY_FILES), *configured]
+        return bool(load_config().security.file_guard.enabled)
     except Exception:
-        return list(_TOOL_DENY_FILES)
+        return True
+
+
+def _load_sensitive_files_from_config() -> list[str]:
+    """Load ``security.file_guard.sensitive_files`` from config.json.
+
+    When the configured list is empty (fresh install), fall back to
+    ``_DEFAULT_DENY_DIRS`` so the secret directory is protected by
+    default.
+    """
+    try:
+        from copaw.config import load_config
+
+        configured = list(
+            load_config().security.file_guard.sensitive_files or [],
+        )
+        return configured if configured else list(_DEFAULT_DENY_DIRS)
+    except Exception:
+        return list(_DEFAULT_DENY_DIRS)
+
+
+_MIME_PREFIXES = (
+    "text/",
+    "application/",
+    "image/",
+    "audio/",
+    "video/",
+    "multipart/",
+    "message/",
+    "font/",
+    "model/",
+)
 
 
 def _looks_like_path_token(token: str) -> bool:
-    """Heuristic check whether a shell token is likely a path."""
+    """Heuristic check whether a shell token is likely a file path."""
     if not token or token.startswith("-"):
         return False
     lowered = token.lower()
-    if lowered.startswith(("http://", "https://", "ftp://")):
+    if lowered.startswith(("http://", "https://", "ftp://", "data:")):
+        return False
+    if lowered.startswith(_MIME_PREFIXES):
         return False
     if token.startswith(("~", "/", "./", "../")):
         return True
@@ -97,7 +132,7 @@ def _extract_paths_from_shell_command(command: str) -> list[str]:
 
         # Handle attached redirection: `>out.txt`, `2>err.log`, `<in.txt`
         attached = False
-        for op in _SHELL_REDIRECT_OPERATORS:
+        for op in _REDIRECT_OPS_BY_LEN:
             if token.startswith(op) and len(token) > len(op):
                 possible_path = token[len(op) :]
                 if _looks_like_path_token(possible_path):
@@ -131,7 +166,8 @@ class FilePathToolGuardian(BaseToolGuardian):
         *,
         sensitive_files: Iterable[str] | None = None,
     ) -> None:
-        super().__init__(name="file_path_tool_guardian")
+        super().__init__(name="file_path_tool_guardian", always_run=True)
+        self._enabled: bool = _is_file_guard_enabled()
         self._sensitive_files: set[str] = set()
         self._sensitive_dirs: set[str] = set()
         self.set_sensitive_files(_load_sensitive_files_from_config())
@@ -183,7 +219,8 @@ class FilePathToolGuardian(BaseToolGuardian):
         return False
 
     def reload(self) -> None:
-        """Reload sensitive-file set from config."""
+        """Reload enabled state and sensitive-file set from config."""
+        self._enabled = _is_file_guard_enabled()
         self.set_sensitive_files(_load_sensitive_files_from_config())
 
     def _is_sensitive(self, abs_path: str) -> bool:
@@ -196,87 +233,109 @@ class FilePathToolGuardian(BaseToolGuardian):
             for dir_path in self._sensitive_dirs
         )
 
+    def _make_finding(
+        self,
+        tool_name: str,
+        param_name: str,
+        raw_value: str,
+        abs_path: str,
+        *,
+        snippet: str | None = None,
+    ) -> GuardFinding:
+        return GuardFinding(
+            id=f"GUARD-{uuid.uuid4().hex}",
+            rule_id="SENSITIVE_FILE_BLOCK",
+            category=GuardThreatCategory.SENSITIVE_FILE_ACCESS,
+            severity=GuardSeverity.HIGH,
+            title="[HIGH] Access to sensitive file is blocked",
+            description=(
+                f"Tool '{tool_name}' attempted to access sensitive "
+                f"file via parameter '{param_name}'."
+            ),
+            tool_name=tool_name,
+            param_name=param_name,
+            matched_value=raw_value,
+            matched_pattern=abs_path,
+            snippet=snippet or abs_path,
+            remediation=(
+                "Use a non-sensitive file path, or remove this path "
+                "from security.file_guard.sensitive_files if needed."
+            ),
+            guardian=self.name,
+            metadata={"resolved_path": abs_path},
+        )
+
+    def _check_value(
+        self,
+        tool_name: str,
+        param_name: str,
+        raw_value: str,
+        findings: list[GuardFinding],
+        *,
+        snippet: str | None = None,
+    ) -> None:
+        """Check a single string value against sensitive paths."""
+        abs_path = _normalize_path(raw_value)
+        if self._is_sensitive(abs_path):
+            findings.append(
+                self._make_finding(
+                    tool_name,
+                    param_name,
+                    raw_value,
+                    abs_path,
+                    snippet=snippet,
+                ),
+            )
+
     def guard(
         self,
         tool_name: str,
         params: dict[str, Any],
     ) -> list[GuardFinding]:
-        """Block tool call when targeted file path is sensitive."""
+        """Block tool call when targeted file path is sensitive.
+
+        Checks all tools: known file tools use specific param names,
+        shell commands get path extraction, and all other tools have
+        every string parameter scanned for sensitive paths.
+        """
+        if not self._enabled:
+            return []
         if not self._sensitive_files and not self._sensitive_dirs:
             return []
 
         findings: list[GuardFinding] = []
 
+        # Shell commands: extract paths from the command string.
         if tool_name == "execute_shell_command":
             command = params.get("command")
             if not isinstance(command, str) or not command.strip():
                 return findings
             for raw_path in _extract_paths_from_shell_command(command):
-                abs_path = _normalize_path(raw_path)
-                if not self._is_sensitive(abs_path):
-                    continue
-                findings.append(
-                    GuardFinding(
-                        id=f"GUARD-{uuid.uuid4().hex}",
-                        rule_id="SENSITIVE_FILE_BLOCK",
-                        category=GuardThreatCategory.SENSITIVE_FILE_ACCESS,
-                        severity=GuardSeverity.HIGH,
-                        title="[HIGH] Access to sensitive file is blocked",
-                        description=(
-                            f"Tool '{tool_name}' command contains a sensitive "
-                            "file path."
-                        ),
-                        tool_name=tool_name,
-                        param_name="command",
-                        matched_value=raw_path,
-                        matched_pattern=abs_path,
-                        snippet=command,
-                        remediation=(
-                            "Use a non-sensitive file path, or remove this "
-                            "path from security.tool_guard.sensitive_files "
-                            "if needed."
-                        ),
-                        guardian=self.name,
-                        metadata={"resolved_path": abs_path},
-                    ),
+                self._check_value(
+                    tool_name,
+                    "command",
+                    raw_path,
+                    findings,
+                    snippet=command,
                 )
             return findings
 
-        param_names = _TOOL_FILE_PARAMS.get(tool_name)
-        if not param_names:
+        # Known file tools: check only the file-path parameters.
+        known_params = _TOOL_FILE_PARAMS.get(tool_name)
+        if known_params:
+            for param_name in known_params:
+                raw_value = params.get(param_name)
+                if not isinstance(raw_value, str) or not raw_value.strip():
+                    continue
+                self._check_value(tool_name, param_name, raw_value, findings)
             return findings
 
-        for param_name in param_names:
-            raw_value = params.get(param_name)
-            if not isinstance(raw_value, str) or not raw_value.strip():
+        # All other tools: scan every string parameter that looks like a path.
+        for param_name, param_value in params.items():
+            if not isinstance(param_value, str) or not param_value.strip():
                 continue
-
-            abs_path = _normalize_path(raw_value)
-            if not self._is_sensitive(abs_path):
+            if not _looks_like_path_token(param_value):
                 continue
+            self._check_value(tool_name, param_name, param_value, findings)
 
-            findings.append(
-                GuardFinding(
-                    id=f"GUARD-{uuid.uuid4().hex}",
-                    rule_id="SENSITIVE_FILE_BLOCK",
-                    category=GuardThreatCategory.SENSITIVE_FILE_ACCESS,
-                    severity=GuardSeverity.HIGH,
-                    title="[HIGH] Access to sensitive file is blocked",
-                    description=(
-                        f"Tool '{tool_name}' attempted to access sensitive "
-                        f"file via parameter '{param_name}'."
-                    ),
-                    tool_name=tool_name,
-                    param_name=param_name,
-                    matched_value=raw_value,
-                    matched_pattern=abs_path,
-                    snippet=abs_path,
-                    remediation=(
-                        "Use a non-sensitive file path, or remove this path "
-                        "from security.tool_guard.sensitive_files if needed."
-                    ),
-                    guardian=self.name,
-                    metadata={"resolved_path": abs_path},
-                ),
-            )
         return findings
