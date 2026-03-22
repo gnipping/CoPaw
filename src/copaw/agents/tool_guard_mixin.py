@@ -23,6 +23,25 @@ from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 logger = logging.getLogger(__name__)
 
 
+class _GuardAction:
+    """Lightweight container for a guard decision made under lock."""
+
+    __slots__ = ("kind", "tool_name", "tool_input", "guard_result")
+
+    def __init__(
+        self,
+        kind: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        guard_result: Any = None,
+    ) -> None:
+        self.kind = kind
+        self.tool_name = tool_name
+        self.tool_input = tool_input
+        self.guard_result = guard_result
+
+
 class ToolGuardMixin:
     """Mixin that adds tool-guard interception to a ReActAgent.
 
@@ -189,30 +208,6 @@ class ToolGuardMixin:
             "tool_input": tool_input or fallback.get("tool_input", {}),
         }
 
-    @staticmethod
-    def _extract_tool_result_text(memory_content: list) -> str:
-        """Read the tool result text from the last system message."""
-        if not memory_content:
-            return ""
-        last_msg, _ = memory_content[-1]
-        if last_msg.role != "system":
-            return ""
-        for block in last_msg.content or []:
-            if not isinstance(block, dict):
-                block = dict(block)
-            if block.get("type") == "tool_result":
-                output = block.get("output", "")
-                if isinstance(output, list):
-                    parts = [
-                        item.get("text", "")
-                        for item in output
-                        if isinstance(item, dict)
-                    ]
-                    return "\n".join(p for p in parts if p)
-                if isinstance(output, str):
-                    return output
-        return ""
-
     async def _cleanup_tool_guard_denied_messages(
         self,
         include_denial_response: bool = True,
@@ -261,20 +256,18 @@ class ToolGuardMixin:
         4. If findings exist, enter the approval flow.
         5. Otherwise, delegate to ``super()._acting``.
 
-        The guard decision block is serialised via ``_tool_guard_lock``
+        The guard *decision* block is serialised via ``_tool_guard_lock``
         so that ``parallel_tool_calls=True`` does not cause state races
-        on shared mixin attributes.  Non-guarded tool execution runs
-        outside the lock for true parallelism.
+        on shared mixin attributes.  Actual tool execution (both
+        pre-approved and non-guarded) runs **outside** the lock for
+        true parallelism.
         """
         self._ensure_tool_guard()
 
+        action: _GuardAction | None = None
         async with self._tool_guard_lock:
             try:
-                handled, result = await self._try_handle_guarded_tool_call(
-                    tool_call,
-                )
-                if handled:
-                    return result
+                action = await self._decide_guard_action(tool_call)
             except Exception as exc:
                 logger.warning(
                     "Tool guard check error (non-blocking): %s",
@@ -282,18 +275,42 @@ class ToolGuardMixin:
                     exc_info=True,
                 )
 
-        return await super()._acting(tool_call)  # type: ignore[misc]
+        if action is not None:
+            return await self._execute_guard_action(action, tool_call)
 
-    async def _try_handle_guarded_tool_call(
+        result = await super()._acting(tool_call)  # type: ignore[misc]
+
+        if getattr(self, "_tool_guard_forced_replay_active", False):
+            tool_name = str(tool_call.get("name", ""))
+            tool_input = tool_call.get("input", {})
+            self._tool_guard_forced_replay_active = False
+            self._tool_guard_replay_done = {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "remaining_queue": getattr(
+                    self,
+                    "_tool_guard_replay_queue",
+                    [],
+                ),
+            }
+
+        return result
+
+    async def _decide_guard_action(
         self,
         tool_call: dict[str, Any],
-    ) -> tuple[bool, dict | None]:
-        """Return ``(handled, result)`` for guard-managed calls."""
+    ) -> "_GuardAction | None":
+        """Decide what guard action to take (runs under lock).
+
+        Returns a ``_GuardAction`` describing what to do, or ``None``
+        to fall through to the default ``super()._acting`` path.
+        No actual tool execution happens here.
+        """
         engine = self._tool_guard_engine
         tool_name = str(tool_call.get("name", ""))
         tool_input = tool_call.get("input", {})
         if not tool_name or not engine.enabled:
-            return False, None
+            return None
 
         if engine.is_denied(tool_name):
             logger.warning(
@@ -301,22 +318,22 @@ class ToolGuardMixin:
                 tool_name,
             )
             denied_result = engine.guard(tool_name, tool_input)
-            return True, await self._acting_auto_denied(
-                tool_call,
+            return _GuardAction(
+                "auto_denied",
                 tool_name,
-                denied_result,
+                tool_input,
+                guard_result=denied_result,
             )
 
         if not engine.is_guarded(tool_name):
-            return False, None
+            return None
 
         if await self._consume_preapproval(tool_name, tool_input):
-            handled_result = await self._run_approved_tool_call(
-                tool_call,
-                tool_name,
-                tool_input,
+            self._tool_guard_pending_info = None
+            await self._cleanup_tool_guard_denied_messages(
+                include_denial_response=True,
             )
-            return True, handled_result
+            return _GuardAction("preapproved", tool_name, tool_input)
 
         guard_result = engine.guard(tool_name, tool_input)
         if guard_result is not None and guard_result.findings:
@@ -324,12 +341,39 @@ class ToolGuardMixin:
 
             log_findings(tool_name, guard_result)
             if self._should_require_approval():
-                return True, await self._acting_with_approval(
-                    tool_call,
+                return _GuardAction(
+                    "needs_approval",
                     tool_name,
-                    guard_result,
+                    tool_input,
+                    guard_result=guard_result,
                 )
-        return False, None
+        return None
+
+    async def _execute_guard_action(
+        self,
+        action: "_GuardAction",
+        tool_call: dict[str, Any],
+    ) -> dict | None:
+        """Execute the guard action decided under lock (runs outside lock)."""
+        if action.kind == "auto_denied":
+            return await self._acting_auto_denied(
+                tool_call,
+                action.tool_name,
+                action.guard_result,
+            )
+        if action.kind == "preapproved":
+            return await self._run_approved_tool_call(
+                tool_call,
+                action.tool_name,
+                action.tool_input,
+            )
+        if action.kind == "needs_approval":
+            return await self._acting_with_approval(
+                tool_call,
+                action.tool_name,
+                action.guard_result,
+            )
+        return None
 
     async def _consume_preapproval(
         self,
@@ -362,10 +406,6 @@ class ToolGuardMixin:
         tool_input: dict[str, Any],
     ) -> dict | None:
         """Execute approved call and persist replay state."""
-        self._tool_guard_pending_info = None
-        await self._cleanup_tool_guard_denied_messages(
-            include_denial_response=True,
-        )
         result = await super()._acting(tool_call)  # type: ignore[misc]
         if getattr(self, "_tool_guard_forced_replay_active", False):
             self._tool_guard_forced_replay_active = False
@@ -570,47 +610,26 @@ class ToolGuardMixin:
         )
 
     async def _reason_about_replay_done(self) -> Msg | None:
-        """Emit replay continuation or completion message."""
+        """Emit replay continuation or completion message.
+
+        When the replay queue is exhausted, all synthetic replay
+        messages are cleaned from memory and ``None`` is returned so
+        that ``_reasoning`` falls through to ``super()._reasoning()``.
+        This lets the LLM respond naturally based on the actual tool
+        results without leaving any approval-process artifacts in the
+        conversation.
+        """
         replay_info = getattr(self, "_tool_guard_replay_done", None)
         if not replay_info:
             return None
 
         self._tool_guard_replay_done = None
-        completion_text = self._build_replay_completion_text(replay_info)
         remaining_queue = self._filter_pending_replay_queue(
             replay_info.get("remaining_queue") or [],
         )
         if not remaining_queue:
-            return await self._emit_assistant_msg(completion_text)
-        return await self._emit_next_replay_tool_call(
-            completion_text,
-            remaining_queue,
-        )
-
-    def _build_replay_completion_text(
-        self,
-        replay_info: dict[str, Any],
-    ) -> str:
-        """Build completion text shown after approved tool execution."""
-        tool_name = replay_info.get("tool_name", "unknown")
-        tool_input = replay_info.get("tool_input", {})
-        params_text = _json.dumps(
-            tool_input,
-            ensure_ascii=False,
-            indent=2,
-        )
-        result_text = self._extract_tool_result_text(self.memory.content)
-        result_preview = result_text[:500]
-        if len(result_text) > 500:
-            result_preview += "..."
-        return (
-            f"✅ **Approved tool executed / 已批准工具执行完成**\n\n"
-            f"- Tool / 工具: `{tool_name}`\n"
-            f"- Parameters / 参数:\n"
-            f"```json\n{params_text}\n```\n"
-            f"- Result / 结果:\n"
-            f"```\n{result_preview}\n```"
-        )
+            return None
+        return await self._emit_next_replay_tool_call(remaining_queue)
 
     def _filter_pending_replay_queue(
         self,
@@ -627,25 +646,23 @@ class ToolGuardMixin:
 
     async def _emit_next_replay_tool_call(
         self,
-        completion_text: str,
         remaining_queue: list[dict[str, Any]],
     ) -> Msg:
-        """Emit assistant message that chains to the next replayed call."""
-        from agentscope.message import ToolUseBlock, TextBlock
+        """Emit assistant message that chains to the next replayed call.
+
+        Only the ``ToolUseBlock`` is included — no approval-process
+        text is added so that the conversation history stays clean
+        after the full replay sequence completes.
+        """
+        from agentscope.message import ToolUseBlock
 
         next_tc = remaining_queue[0]
         self._tool_guard_replay_queue = remaining_queue[1:]
         next_id = next_tc.get("id") or f"queued-{_uuid.uuid4().hex[:12]}"
-        status = (
-            f"{completion_text}\n\n"
-            f"⏳ **{len(remaining_queue)} more tool call(s) remaining / "
-            f"还有 {len(remaining_queue)} 个工具调用待执行**"
-        )
         self._tool_guard_forced_replay_active = True
         msg = Msg(
             self.name,
             [
-                TextBlock(type="text", text=status),
                 ToolUseBlock(
                     type="tool_use",
                     id=next_id,

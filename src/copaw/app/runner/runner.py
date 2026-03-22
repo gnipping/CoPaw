@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,25 +38,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_APPROVE_RE = re.compile(
-    r"(?:^|[\s/])approve(?:\s|$)|批准|同意",
-    re.IGNORECASE,
-)
-_DENY_RE = re.compile(
-    r"not\s+approve|don'?t\s+approve|never\s+approve|不批准|拒绝|别批准|否决",
-    re.IGNORECASE,
+_APPROVE_EXACT = frozenset(
+    {
+        "approve",
+        "/approve",
+        "/daemon approve",
+    },
 )
 
 
 def _is_approval(text: str) -> bool:
-    """Return True when *text* expresses approval intent.
+    """Return True only when *text* is exactly ``approve``,
+    ``/approve``, or ``/daemon approve`` (case-insensitive).
 
-    Matches loosely (``approve`` / ``批准`` / ``同意`` anywhere) but rejects
-    negated forms (``not approve``, ``don't approve``, ``不批准``, …).
+    Leading/trailing whitespace and blank lines are stripped before
+    comparison.  Everything else is treated as denial.
     """
-    if _DENY_RE.search(text):
-        return False
-    return bool(_APPROVE_RE.search(text))
+    normalized = " ".join(text.split()).lower()
+    return normalized in _APPROVE_EXACT
 
 
 class AgentRunner(Runner):
