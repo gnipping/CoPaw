@@ -25,7 +25,7 @@ import type {
   WorkspaceSkillSummary,
 } from "../../../api/types";
 import { parseErrorDetail } from "../../../utils/error";
-import { handleScanError } from "../../../utils/scanError";
+import { handleScanError, checkScanWarnings } from "../../../utils/scanError";
 import { getAgentDisplayName } from "../../../utils/agentDisplayName";
 import {
   getSkillDisplaySource,
@@ -274,8 +274,16 @@ function SkillPoolPage() {
       }
       message.success(t("skillPool.broadcastSuccess"));
       closeModal();
-      invalidateSkillCache({ pool: true, workspaces: true }); // Clear pool and workspaces cache
+      invalidateSkillCache({ pool: true, workspaces: true });
       await loadData(true);
+      for (const skillName of broadcastSkillNames) {
+        await checkScanWarnings(
+          skillName,
+          api.getBlockedHistory,
+          api.getSkillScanner,
+          t,
+        );
+      }
     } catch (error) {
       if (!handleScanError(error, t)) {
         message.error(
@@ -414,8 +422,14 @@ function SkillPoolPage() {
           : t("common.create"),
       );
       closeDrawer();
-      invalidateSkillCache({ pool: true }); // Clear pool cache
+      invalidateSkillCache({ pool: true });
       await loadData(true);
+      await checkScanWarnings(
+        result.name || skillName,
+        api.getBlockedHistory,
+        api.getSkillScanner,
+        t,
+      );
     } catch (error) {
       if (handleScanError(error, t)) return;
       const detail = parseErrorDetail(error);

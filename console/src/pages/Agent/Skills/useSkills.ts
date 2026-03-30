@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { message } from "@agentscope-ai/design";
+import { message, Modal } from "@agentscope-ai/design";
 import api from "../../../api";
 import { invalidateSkillCache } from "../../../api/modules/skill";
 import type { SkillSpec } from "../../../api/types";
 import { useTranslation } from "react-i18next";
 import { useAgentStore } from "../../../stores/agentStore";
 import { parseErrorDetail } from "../../../utils/error";
-import { handleScanError, showScanWarnModal } from "../../../utils/scanError";
+import {
+  handleScanError,
+  checkScanWarnings as checkScanWarningsShared,
+} from "../../../utils/scanError";
 
 type SkillActionResult =
   | { success: true; name?: string; imported?: string[] }
@@ -35,29 +38,13 @@ export function useSkills() {
   );
 
   const checkScanWarnings = useCallback(
-    async (skillName: string) => {
-      try {
-        const [alerts, scannerCfg] = await Promise.all([
-          api.getBlockedHistory(),
-          api.getSkillScanner(),
-        ]);
-        if (!alerts.length) return;
-        if (
-          scannerCfg?.whitelist?.some(
-            (w: { skill_name: string }) => w.skill_name === skillName,
-          )
-        ) {
-          return;
-        }
-        const latestForSkill = alerts
-          .filter((a) => a.skill_name === skillName && a.action === "warned")
-          .pop();
-        if (!latestForSkill) return;
-        showScanWarnModal(latestForSkill.findings || [], t);
-      } catch {
-        return;
-      }
-    },
+    (skillName: string) =>
+      checkScanWarningsShared(
+        skillName,
+        api.getBlockedHistory,
+        api.getSkillScanner,
+        t,
+      ),
     [t],
   );
 

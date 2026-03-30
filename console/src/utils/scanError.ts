@@ -3,6 +3,8 @@ import React from "react";
 import type {
   SecurityScanErrorResponse,
   BlockedSkillFinding,
+  BlockedSkillRecord,
+  SkillScannerConfig,
 } from "../api/modules/security";
 import type { TFunction } from "i18next";
 
@@ -114,4 +116,37 @@ export function handleScanError(error: unknown, t: TFunction): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * After a successful operation, check if the scanner recorded any
+ * warn-mode findings and show a warning modal if so.
+ */
+export async function checkScanWarnings(
+  skillName: string,
+  fetchAlerts: () => Promise<BlockedSkillRecord[]>,
+  fetchScannerCfg: () => Promise<SkillScannerConfig>,
+  t: TFunction,
+): Promise<void> {
+  try {
+    const [alerts, scannerCfg] = await Promise.all([
+      fetchAlerts(),
+      fetchScannerCfg(),
+    ]);
+    if (!alerts.length) return;
+    if (
+      scannerCfg?.whitelist?.some(
+        (w: { skill_name: string }) => w.skill_name === skillName,
+      )
+    ) {
+      return;
+    }
+    const latestForSkill = alerts
+      .filter((a) => a.skill_name === skillName && a.action === "warned")
+      .pop();
+    if (!latestForSkill) return;
+    showScanWarnModal(latestForSkill.findings || [], t);
+  } catch {
+    // best-effort; don't break the caller on failure
+  }
 }
