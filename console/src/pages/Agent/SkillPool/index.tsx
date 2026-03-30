@@ -25,6 +25,7 @@ import type {
   WorkspaceSkillSummary,
 } from "../../../api/types";
 import { parseErrorDetail } from "../../../utils/error";
+import { handleScanError } from "../../../utils/scanError";
 import { getAgentDisplayName } from "../../../utils/agentDisplayName";
 import {
   getSkillDisplaySource,
@@ -211,6 +212,7 @@ function SkillPoolPage() {
             });
             break;
           } catch (error) {
+            if (handleScanError(error, t)) return;
             const detail = parseErrorDetail(error);
             const conflicts = Array.isArray(detail?.conflicts)
               ? detail.conflicts
@@ -275,9 +277,13 @@ function SkillPoolPage() {
       invalidateSkillCache({ pool: true, workspaces: true }); // Clear pool and workspaces cache
       await loadData(true);
     } catch (error) {
-      message.error(
-        error instanceof Error ? error.message : t("skillPool.broadcastFailed"),
-      );
+      if (!handleScanError(error, t)) {
+        message.error(
+          error instanceof Error
+            ? error.message
+            : t("skillPool.broadcastFailed"),
+        );
+      }
     }
   };
 
@@ -411,6 +417,7 @@ function SkillPoolPage() {
       invalidateSkillCache({ pool: true }); // Clear pool cache
       await loadData(true);
     } catch (error) {
+      if (handleScanError(error, t)) return;
       const detail = parseErrorDetail(error);
       if (detail?.suggested_name) {
         const renameMap = await showConflictRenameModal([
