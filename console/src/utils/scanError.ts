@@ -1,6 +1,9 @@
 import { Modal } from "@agentscope-ai/design";
 import React from "react";
-import type { SecurityScanErrorResponse, BlockedSkillFinding } from "../api/modules/security";
+import type {
+  SecurityScanErrorResponse,
+  BlockedSkillFinding,
+} from "../api/modules/security";
 import type { TFunction } from "i18next";
 
 export function tryParseScanError(
@@ -104,10 +107,7 @@ export function showScanWarnModal(
  * Check an error for a scan failure, show the modal if found, and return
  * whether it was handled.
  */
-export function handleScanError(
-  error: unknown,
-  t: TFunction,
-): boolean {
+export function handleScanError(error: unknown, t: TFunction): boolean {
   const scanError = tryParseScanError(error);
   if (scanError) {
     showScanErrorModal(scanError, t);

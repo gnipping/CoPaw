@@ -6,10 +6,7 @@ import type { SkillSpec } from "../../../api/types";
 import { useTranslation } from "react-i18next";
 import { useAgentStore } from "../../../stores/agentStore";
 import { parseErrorDetail } from "../../../utils/error";
-import {
-  handleScanError,
-  showScanWarnModal,
-} from "../../../utils/scanError";
+import { handleScanError, showScanWarnModal } from "../../../utils/scanError";
 
 type SkillActionResult =
   | { success: true; name?: string; imported?: string[] }
