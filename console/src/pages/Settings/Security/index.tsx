@@ -300,9 +300,7 @@ function SecurityPage() {
                             <Select
                               mode="tags"
                               options={toolOptions}
-                              placeholder={t(
-                                "security.deniedToolsPlaceholder",
-                              )}
+                              placeholder={t("security.deniedToolsPlaceholder")}
                               disabled={!enabled}
                               allowClear
                               style={{ width: "100%" }}
