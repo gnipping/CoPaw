@@ -7,7 +7,6 @@ import type { SkillSpec } from "../../../api/types";
 import { useTranslation } from "react-i18next";
 import { useAgentStore } from "../../../stores/agentStore";
 import { parseErrorDetail } from "../../../utils/error";
-import type { SecurityScanErrorResponse } from "../../../api/modules/security";
 import {
   handleScanError,
   checkScanWarnings as checkScanWarningsShared,
