@@ -39,7 +39,7 @@ The **Tool Guard** scans tool parameters **before** the agent invokes a tool, de
 
 ### How it works
 
-1. When the agent calls a tool, the Tool Guard inspects relevant parameters. Built-in regex rules primarily target **`execute_shell_command`**; sensitive path access for tools like **`write_file` / `read_file`** is covered by **File Guard** (and you can extend coverage with **custom rules**).
+1. When the agent calls a tool, the Tool Guard inspects relevant parameters. Built-in regex rules primarily target **`execute_shell_command`**.
 2. Regex rules detect dangerous patterns, for example:
    - `rm -rf /` — Dangerous file deletion
    - SQL-injection-like fragments
@@ -49,7 +49,7 @@ The **Tool Guard** scans tool parameters **before** the agent invokes a tool, de
    - Reverse shells, fork bombs, etc.
      (Exact coverage depends on built-in and custom rules.)
 3. Each rule has an independent severity level (CRITICAL, HIGH, MEDIUM, LOW, INFO)
-4. For **CRITICAL** or **HIGH** findings: in the **Console / interactive sessions**, the tool call enters a **pending-approval** flow — you approve or reject before it runs. In **non-interactive contexts without a session**, findings are logged and **execution may still proceed** — use **`denied_tools`** to hard-block specific tools or tighten rules when needed.
+4. For CRITICAL or HIGH findings: in the Console / interactive sessions, the tool call enters a pending-approval flow — you approve or reject before it runs. In non-interactive contexts without a session, findings are logged and execution may still proceed — use **`denied_tools`** to hard-block specific tools or tighten rules when needed.
 
 ### Configuration
 
@@ -404,7 +404,7 @@ Built-in signature categories:
 - `hardcoded_secrets` — Hardcoded secrets
 - `prompt_injection` — Prompt injection
 - `social_engineering` — Social engineering
-- `supply_chain_attack` — Supply chain attacks (matches the `category` field in built-in YAML signatures)
+- `supply_chain_attack` — Supply chain attacks
 - `obfuscation` — Code obfuscation
 - `resource_abuse` — Resource abuse
 - `unauthorized_tool_use` — Unauthorized tool use
