@@ -18,7 +18,10 @@ from typing import Any, Literal
 
 from agentscope.message import Msg
 
-from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
+from ..security.tool_guard.models import (
+    TOOL_GUARD_DENIED_MARK,
+    GuardSeverity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -579,14 +582,15 @@ class ToolGuardMixin:
         }
 
         findings_text = format_findings_summary(guard_result)
+        max_sev = guard_result.max_severity
+        sev_emoji, sev_en, sev_zh = self._severity_emoji_and_labels(max_sev)
         denied_text = (
             f"⚠️ **Risk Detected / 检测到风险**\n\n"
             f"- Tool / 工具: `{tool_name}`\n"
-            f"- Severity / 严重性: "
-            f"`{guard_result.max_severity.value}`\n"
-            f"- Findings / 发现: "
-            f"`{guard_result.findings_count}`\n\n"
-            f"{findings_text}\n\n"
+            f"- {sev_emoji} Severity / 严重性: `{max_sev.value}` "
+            f"({sev_en} / {sev_zh})\n"
+            f"- Findings / 发现: `{guard_result.findings_count}`\n"
+            f"- Risk summary / 风险说明:\n{findings_text}\n\n"
             f"Type `/approve` to approve, "
             f"or send any message to deny.\n"
             f"输入 `/approve` 批准执行，或发送任意消息拒绝。"
@@ -800,6 +804,51 @@ class ToolGuardMixin:
             hint_zh = "触发工具护栏（在安全-工具护栏页面可以更改设置）"
         return label, f"💡 {hint_en}\n💡 {hint_zh}"
 
+    @staticmethod
+    def _severity_emoji_and_labels(
+        severity: GuardSeverity,
+    ) -> tuple[str, str, str]:
+        """Return (emoji, english_label, chinese_label) for a severity level."""
+        high = (GuardSeverity.CRITICAL, GuardSeverity.HIGH)
+        emoji = "🔴" if severity in high else "🟡"
+        labels: dict[GuardSeverity, tuple[str, str]] = {
+            GuardSeverity.CRITICAL: ("Critical", "危急"),
+            GuardSeverity.HIGH: ("High", "高"),
+            GuardSeverity.MEDIUM: ("Medium", "中"),
+            GuardSeverity.LOW: ("Low", "低"),
+            GuardSeverity.INFO: ("Info", "提示"),
+            GuardSeverity.SAFE: ("Safe", "无风险"),
+        }
+        en, zh = labels.get(severity, (severity.value, severity.value))
+        return emoji, en, zh
+
+    @staticmethod
+    def _format_risk_severity_and_summary_for_pending(
+        guard_result: Any,
+    ) -> str:
+        """Build severity + findings summary lines for approval UI."""
+        if not guard_result or not getattr(guard_result, "findings", None):
+            return (
+                "- ⚠️ Severity / 严重性: unknown / 未知\n"
+                "- Risk summary / 风险说明: "
+                "(not available / 暂不可用)\n\n"
+            )
+
+        max_sev = guard_result.max_severity
+        emoji, sev_en, sev_zh = ToolGuardMixin._severity_emoji_and_labels(
+            max_sev,
+        )
+        from qwenpaw.security.tool_guard.approval import (
+            format_findings_summary,
+        )
+
+        findings_summary = format_findings_summary(guard_result)
+        return (
+            f"- {emoji} Severity / 严重性: `{max_sev.value}` "
+            f"({sev_en} / {sev_zh})\n"
+            f"- Risk summary / 风险说明:\n{findings_summary}\n\n"
+        )
+
     async def _emit_waiting_for_approval(self) -> Msg:
         """Emit waiting-for-approval guidance when call is blocked."""
         pending = await self._get_pending_info_for_display()
@@ -814,6 +863,9 @@ class ToolGuardMixin:
             indent=2,
         )
         trigger_label, settings_hint = self._guardian_trigger_hint(guardians)
+        risk_lines = self._format_risk_severity_and_summary_for_pending(
+            guard_result,
+        )
 
         # Extract remediation hint from guard result if available
         remediation_hint = ""
@@ -841,6 +893,7 @@ class ToolGuardMixin:
         return await self._emit_assistant_msg(
             "⏳ Waiting for approval / 等待审批\n\n"
             f"- Tool / 工具: `{tool_name}`\n"
+            f"{risk_lines}"
             f"- Triggered by / 触发来源: `{trigger_label}`\n"
             f"- Parameters / 参数:\n"
             f"```json\n{params_text}\n```\n\n"
