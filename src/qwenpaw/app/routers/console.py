@@ -7,7 +7,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any, AsyncGenerator, Union
+from typing import AsyncGenerator, Union
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from starlette.responses import StreamingResponse
@@ -29,35 +29,6 @@ def _safe_filename(name: str) -> str:
     """Safe basename, alphanumeric/./-/_, max 200 chars."""
     base = Path(name).name if name else "file"
     return re.sub(r"[^\w.\-]", "_", base)[:200] or "file"
-
-
-def _normalize_ui_language(raw: Any) -> str | None:
-    """Normalize incoming UI language to one of en/zh/ru/ja."""
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    short = raw.strip().lower().split(",")[0].split("-")[0]
-    if short in {"en", "zh", "ru", "ja"}:
-        return short
-    return None
-
-
-def _set_request_ui_language(
-    meta: dict[str, str] | Any,
-    request: Request,
-) -> None:
-    """Set normalized ui_language from body/header candidates."""
-    if not isinstance(meta, dict):
-        return
-    candidates = (
-        meta.get("ui_language"),
-        request.headers.get("X-UI-Language"),
-        request.headers.get("Accept-Language"),
-    )
-    for raw in candidates:
-        ui_lang = _normalize_ui_language(raw)
-        if ui_lang is not None:
-            meta["ui_language"] = ui_lang
-            return
 
 
 def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
@@ -84,21 +55,16 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
             elif isinstance(content_part, dict) and "content" in content_part:
                 content_parts.extend(content_part["content"] or [])
 
-    meta: dict[str, str] = {
-        "session_id": session_id,
-        "user_id": sender_id,
-    }
-    if isinstance(request_data, dict):
-        ui_lang = request_data.get("ui_language")
-        if isinstance(ui_lang, str) and ui_lang.strip():
-            meta["ui_language"] = ui_lang.strip().lower()
-
-    return {
+    native_payload = {
         "channel_id": channel_id,
         "sender_id": sender_id,
         "content_parts": content_parts,
-        "meta": meta,
+        "meta": {
+            "session_id": session_id,
+            "user_id": sender_id,
+        },
     }
+    return native_payload
 
 
 def _tail_text_file(
@@ -153,11 +119,6 @@ async def post_console_chat(
         native_payload = _extract_session_and_payload(request_data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-
-    # Prefer explicit UI language from body, then request headers.
-    # This keeps backend guard messages aligned with frontend locale.
-    _set_request_ui_language(native_payload.get("meta"), request)
-
     session_id = console_channel.resolve_session_id(
         sender_id=native_payload["sender_id"],
         channel_meta=native_payload["meta"],
