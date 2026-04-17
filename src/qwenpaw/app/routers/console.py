@@ -55,20 +55,21 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
             elif isinstance(content_part, dict) and "content" in content_part:
                 content_parts.extend(content_part["content"] or [])
 
-    native_payload = {
-        "channel_id": channel_id,
-        "sender_id": sender_id,
-        "content_parts": content_parts,
-        "meta": {
-            "session_id": session_id,
-            "user_id": sender_id,
-        },
+    meta: dict[str, str] = {
+        "session_id": session_id,
+        "user_id": sender_id,
     }
     if isinstance(request_data, dict):
         ui_lang = request_data.get("ui_language")
         if isinstance(ui_lang, str) and ui_lang.strip():
-            native_payload["meta"]["ui_language"] = ui_lang.strip().lower()
-    return native_payload
+            meta["ui_language"] = ui_lang.strip().lower()
+
+    return {
+        "channel_id": channel_id,
+        "sender_id": sender_id,
+        "content_parts": content_parts,
+        "meta": meta,
+    }
 
 
 def _tail_text_file(

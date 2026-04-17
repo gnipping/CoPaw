@@ -33,14 +33,9 @@ def _normalize_tool_guard_ui_lang(raw: Any) -> str:
     s = raw.strip().lower()
     if s in ("zh", "en", "ru", "ja"):
         return s
-    if s.startswith("zh"):
-        return "zh"
-    if s.startswith("ru"):
-        return "ru"
-    if s.startswith("ja"):
-        return "ja"
-    if s.startswith("en"):
-        return "en"
+    for prefix in ("zh", "ru", "ja", "en"):
+        if s.startswith(prefix):
+            return prefix
     return "en"
 
 
