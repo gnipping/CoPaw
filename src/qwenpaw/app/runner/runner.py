@@ -470,6 +470,14 @@ class AgentRunner(Runner):
             if custom_context and isinstance(custom_context, dict):
                 base_request_context.update(custom_context)
 
+            ch_meta = getattr(request, "channel_meta", None)
+            if isinstance(ch_meta, dict):
+                ui_lang = ch_meta.get("ui_language")
+                if isinstance(ui_lang, str) and ui_lang.strip():
+                    base_request_context[
+                        "ui_language"
+                    ] = ui_lang.strip().lower()
+
             # Mission Mode: /mission
             _ws = self.workspace_dir or WORKING_DIR
             mission_info: dict | None = None

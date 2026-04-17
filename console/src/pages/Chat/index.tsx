@@ -42,6 +42,20 @@ import {
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
 
+/** Short UI language for server-side user-visible strings (tool guard). */
+function consoleUiLanguageForPayload(i18n: {
+  resolvedLanguage?: string;
+  language?: string;
+}): string {
+  const raw = (i18n.resolvedLanguage || i18n.language || "en")
+    .split("-")[0]
+    .toLowerCase();
+  if (raw === "zh") return "zh";
+  if (raw === "ja") return "ja";
+  if (raw === "ru") return "ru";
+  return "en";
+}
+
 interface SessionInfo {
   session_id?: string;
   user_id?: string;
@@ -444,7 +458,7 @@ function RuntimeLoadingBridge({
 }
 
 export default function ChatPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { isDark } = useTheme();
@@ -668,6 +682,7 @@ export default function ChatPage() {
         channel: window.currentChannel || session?.channel || DEFAULT_CHANNEL,
         stream: true,
         ...biz_params,
+        ui_language: consoleUiLanguageForPayload(i18n),
       };
 
       const backendChatId =
@@ -694,7 +709,7 @@ export default function ChatPage() {
 
       return response;
     },
-    [selectedAgent],
+    [selectedAgent, i18n.language, i18n.resolvedLanguage],
   );
 
   const handleFileUpload = useCallback(
