@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 def _normalize_tool_guard_ui_lang(raw: Any) -> str:
     """Map language code to tool-guard UI bundle (en/zh/ru/ja)."""
     if not isinstance(raw, str) or not raw.strip():
-        return "zh"
+        return "en"
     s = raw.strip().lower()
     if s in ("zh", "en", "ru", "ja"):
         return s

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tool guard i18n bundles."""
 
 from __future__ import annotations
