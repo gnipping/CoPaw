@@ -42,7 +42,8 @@ def _normalize_ui_language(raw: Any) -> str | None:
 
 
 def _set_request_ui_language(
-    meta: dict[str, str] | Any, request: Request
+    meta: dict[str, str] | Any,
+    request: Request,
 ) -> None:
     """Set normalized ui_language from body/header candidates."""
     if not isinstance(meta, dict):
