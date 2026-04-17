@@ -145,7 +145,7 @@ async def post_console_chat(
         ui_lang = _normalize_ui_language(request.headers.get("X-UI-Language"))
     if ui_lang is None:
         ui_lang = _normalize_ui_language(
-            request.headers.get("Accept-Language")
+            request.headers.get("Accept-Language"),
         )
     if ui_lang is not None and isinstance(meta, dict):
         meta["ui_language"] = ui_lang
