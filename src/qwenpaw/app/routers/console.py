@@ -41,6 +41,22 @@ def _normalize_ui_language(raw: Any) -> str | None:
     return None
 
 
+def _set_request_ui_language(meta: dict[str, str] | Any, request: Request) -> None:
+    """Set normalized ui_language from body/header candidates."""
+    if not isinstance(meta, dict):
+        return
+    candidates = (
+        meta.get("ui_language"),
+        request.headers.get("X-UI-Language"),
+        request.headers.get("Accept-Language"),
+    )
+    for raw in candidates:
+        ui_lang = _normalize_ui_language(raw)
+        if ui_lang is not None:
+            meta["ui_language"] = ui_lang
+            return
+
+
 def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
     """Extract run_key (ChatSpec.id), session_id, and native payload.
 
@@ -137,18 +153,7 @@ async def post_console_chat(
 
     # Prefer explicit UI language from body, then request headers.
     # This keeps backend guard messages aligned with frontend locale.
-    meta = native_payload.get("meta")
-    ui_lang = None
-    if isinstance(meta, dict):
-        ui_lang = _normalize_ui_language(meta.get("ui_language"))
-    if ui_lang is None:
-        ui_lang = _normalize_ui_language(request.headers.get("X-UI-Language"))
-    if ui_lang is None:
-        ui_lang = _normalize_ui_language(
-            request.headers.get("Accept-Language"),
-        )
-    if ui_lang is not None and isinstance(meta, dict):
-        meta["ui_language"] = ui_lang
+    _set_request_ui_language(native_payload.get("meta"), request)
 
     session_id = console_channel.resolve_session_id(
         sender_id=native_payload["sender_id"],
