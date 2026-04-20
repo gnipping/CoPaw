@@ -59,8 +59,7 @@ _EMPTY_QUOTE_DASH_RE = re.compile(r"(?:^|\s)(?:''|\"\")+\s*-")
 
 
 class _QuoteState:
-    """Tracks shell quoting context character-by-character.
-    """
+    """Tracks shell quoting context character-by-character."""
 
     __slots__ = ("in_single", "in_double", "escaped")
 
