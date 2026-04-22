@@ -184,17 +184,17 @@ QwenPaw 的安全系统由三个核心安全层组成:
 
 **代码执行（CRITICAL/HIGH）：**
 
-| 规则 ID                       | 严重级别 | 检测目标                                                                               | 说明                                                                                         |
-| ----------------------------- | -------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `TOOL_CMD_PIPE_TO_SHELL`      | CRITICAL | `curl/wget ... \| bash/sh` 模式                                                        | 下载并立即执行远程脚本                                                                     |
-| `TOOL_CMD_OBFUSCATED_EXEC`    | HIGH     | `base64 -d \| bash` 模式                                                               | 执行 base64 编码的命令                                                                     |
-| `TOOL_CMD_IFS_INJECTION`      | HIGH     | `$IFS`、`${...IFS...}`                                                                 | 利用字段分隔符拆分 token,绕过简单词边界类检测                                              |
-| `TOOL_CMD_CONTROL_CHARS`      | CRITICAL | 不可见控制字符(含 NUL 等)                                                              | 可能在简单扫描下隐藏元字符                                                                 |
-| `TOOL_CMD_UNICODE_WHITESPACE` | HIGH     | NBSP、表意空格等 Unicode 空白                                                          | 解析器与 Bash 对空白处理不一致时的绕过面                                                   |
-| `TOOL_CMD_PROC_ENVIRON`       | HIGH     | `/proc/self/environ`、`/proc/<pid>/environ`                                           | 读取进程环境块(密钥、令牌),常与执行或外泄链配合                                            |
-| `TOOL_CMD_JQ_SYSTEM`          | HIGH     | 含 `system(` 的 `jq`                                                                   | 在 jq 程序中嵌入 Shell 执行                                                                |
-| `TOOL_CMD_JQ_FILE_FLAGS`      | HIGH     | `jq` 的 `-f`/`--from-file`、`--rawfile`、`--slurpfile`、`-L`、`--library-path`         | 任意读文件或加载外部 jq 代码路径                                                           |
-| `TOOL_CMD_ZSH_DANGEROUS`      | HIGH     | `zmodload`、`emulate ... -c`、`sysopen`/`zpty`/`ztcp`、`zf_*`、`fc ... -e` 等          | zsh 内建提供的原始 I/O、网络或执行能力,绕过常见路径型检查                                    |
+| 规则 ID                       | 严重级别 | 检测目标                                                                       | 说明                                                      |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `TOOL_CMD_PIPE_TO_SHELL`      | CRITICAL | `curl/wget ... \| bash/sh` 模式                                                | 下载并立即执行远程脚本                                    |
+| `TOOL_CMD_OBFUSCATED_EXEC`    | HIGH     | `base64 -d \| bash` 模式                                                       | 执行 base64 编码的命令                                    |
+| `TOOL_CMD_IFS_INJECTION`      | HIGH     | `$IFS`、`${...IFS...}`                                                         | 利用字段分隔符拆分 token,绕过简单词边界类检测             |
+| `TOOL_CMD_CONTROL_CHARS`      | CRITICAL | 不可见控制字符(含 NUL 等)                                                      | 可能在简单扫描下隐藏元字符                                |
+| `TOOL_CMD_UNICODE_WHITESPACE` | HIGH     | NBSP、表意空格等 Unicode 空白                                                  | 解析器与 Bash 对空白处理不一致时的绕过面                  |
+| `TOOL_CMD_PROC_ENVIRON`       | HIGH     | `/proc/self/environ`、`/proc/<pid>/environ`                                    | 读取进程环境块(密钥、令牌),常与执行或外泄链配合           |
+| `TOOL_CMD_JQ_SYSTEM`          | HIGH     | 含 `system(` 的 `jq`                                                           | 在 jq 程序中嵌入 Shell 执行                               |
+| `TOOL_CMD_JQ_FILE_FLAGS`      | HIGH     | `jq` 的 `-f`/`--from-file`、`--rawfile`、`--slurpfile`、`-L`、`--library-path` | 任意读文件或加载外部 jq 代码路径                          |
+| `TOOL_CMD_ZSH_DANGEROUS`      | HIGH     | `zmodload`、`emulate ... -c`、`sysopen`/`zpty`/`ztcp`、`zf_*`、`fc ... -e` 等  | zsh 内建提供的原始 I/O、网络或执行能力,绕过常见路径型检查 |
 
 **权限提升（CRITICAL/HIGH）：**
 
@@ -213,15 +213,15 @@ QwenPaw 的安全系统由三个核心安全层组成:
 
 引擎还会对 `execute_shell_command` 运行 **`ShellEvasionGuardian`**。它维护引号状态,弥补仅靠行级或纯正则易漏的混淆(例如单引号外的命令替换、`` ` ``、`$()`、Zsh 形式、`$'...'`/`$"..."` 技巧、反斜杠转义的空白或 shell 操作符——对常见 `find ... -exec ... {} \;` 有例外——可能拆分命令的裸换行或 `\r` 且跳过 heredoc、`#` 注释与引号状态不同步、引号内换行后接看似注释的行等)。上报的规则 ID(严重级别均为 **HIGH**):
 
-| 规则 ID                               | 说明                                                         |
-| ------------------------------------- | ------------------------------------------------------------ |
-| `SHELL_EVASION_COMMAND_SUBSTITUTION`  | 单引号 `'`...`'` 外的反引号或命令/进程替换类写法             |
-| `SHELL_EVASION_OBFUSCATED_FLAGS`      | ANSI-C/区域化引号、空引号标志位技巧或引号包裹的标志片段      |
-| `SHELL_EVASION_BACKSLASH_WHITESPACE`  | 引号外对空格或制表符的反斜杠转义                           |
-| `SHELL_EVASION_BACKSLASH_OPERATOR`    | 引号外对 `; \| & < >` 前加反斜杠                           |
-| `SHELL_EVASION_NEWLINE`               | 回车或未在引号内且后跟更多命令文本的换行                   |
-| `SHELL_EVASION_COMMENT_QUOTE_DESYNC`  | 未在引号内的 `#` 注释行中出现引号字符,干扰引号跟踪         |
-| `SHELL_EVASION_QUOTED_NEWLINE`        | 引号内换行且后续片段形如 `#` 注释行                        |
+| 规则 ID                              | 说明                                                    |
+| ------------------------------------ | ------------------------------------------------------- |
+| `SHELL_EVASION_COMMAND_SUBSTITUTION` | 单引号 `'`...`'` 外的反引号或命令/进程替换类写法        |
+| `SHELL_EVASION_OBFUSCATED_FLAGS`     | ANSI-C/区域化引号、空引号标志位技巧或引号包裹的标志片段 |
+| `SHELL_EVASION_BACKSLASH_WHITESPACE` | 引号外对空格或制表符的反斜杠转义                        |
+| `SHELL_EVASION_BACKSLASH_OPERATOR`   | 引号外对 `; \| & < >` 前加反斜杠                        |
+| `SHELL_EVASION_NEWLINE`              | 回车或未在引号内且后跟更多命令文本的换行                |
+| `SHELL_EVASION_COMMENT_QUOTE_DESYNC` | 未在引号内的 `#` 注释行中出现引号字符,干扰引号跟踪      |
+| `SHELL_EVASION_QUOTED_NEWLINE`       | 引号内换行且后续片段形如 `#` 注释行                     |
 
 **配置说明:** `config.json` 中的 `disabled_rules` 仅作用于 YAML 规则 ID(一般为 `TOOL_CMD_*`),**不会**关闭 `SHELL_EVASION_*`;关闭工具守卫会一并停用所有守卫(含本守卫)。
 

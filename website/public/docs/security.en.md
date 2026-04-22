@@ -45,7 +45,7 @@ The **Tool Guard** scans tool parameters **before** the agent invokes a tool, de
    - Path traversal `../`
    - Privilege escalation `sudo`, `su`
    - Reverse shells, fork bombs, obfuscated flags, Unicode whitespace tricks, etc.
-   (Exact coverage depends on built-in and custom rules.)
+     (Exact coverage depends on built-in and custom rules.)
 3. Each rule has an independent severity level (CRITICAL, HIGH, MEDIUM, LOW, INFO)
 4. For CRITICAL or HIGH findings: in the Console / interactive sessions, the tool call enters a pending-approval flow — you approve or reject before it runs. In non-interactive contexts without a session, findings are logged and execution may still proceed — use **`denied_tools`** to hard-block specific tools or tighten rules when needed.
 
@@ -186,17 +186,17 @@ Tool Guard includes the following built-in detection rules (for `execute_shell_c
 
 **Code Execution (CRITICAL/HIGH):**
 
-| Rule ID                       | Severity | Detection Target                                                                 | Description                                                                                    |
-| ----------------------------- | -------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `TOOL_CMD_PIPE_TO_SHELL`      | CRITICAL | `curl/wget ... \| bash/sh` patterns                                              | Downloads and immediately executes remote scripts                                              |
-| `TOOL_CMD_OBFUSCATED_EXEC`    | HIGH     | `base64 -d \| bash` patterns                                                     | Executes base64-encoded commands                                                             |
-| `TOOL_CMD_IFS_INJECTION`      | HIGH     | `$IFS`, `${...IFS...}`                                                           | Token splitting that can evade naive word-boundary checks                                      |
-| `TOOL_CMD_CONTROL_CHARS`      | CRITICAL | Non-printable control characters (for example NUL)                               | Characters that can hide metacharacters from simple scans                                      |
-| `TOOL_CMD_UNICODE_WHITESPACE` | HIGH     | NBSP, ideographic space, and other Unicode whitespace                            | Whitespace that parsers and Bash may treat differently                                         |
-| `TOOL_CMD_PROC_ENVIRON`       | HIGH     | `/proc/self/environ`, `/proc/<pid>/environ`                                      | Reads process environment blobs (secrets, tokens), often chained with execution or exfiltration |
-| `TOOL_CMD_JQ_SYSTEM`          | HIGH     | `jq` with `system(`                                                              | Shell execution embedded in jq programs                                                        |
-| `TOOL_CMD_JQ_FILE_FLAGS`      | HIGH     | `jq` `-f` / `--from-file`, `--rawfile`, `--slurpfile`, `-L`, `--library-path`    | Reading arbitrary files or loading external jq code paths                                        |
-| `TOOL_CMD_ZSH_DANGEROUS`      | HIGH     | `zmodload`, `emulate ... -c`, `sysopen` / `zpty` / `ztcp`, `zf_*`, `fc ... -e`    | zsh builtins that enable raw I/O, network, or execution paths beyond typical binary checks       |
+| Rule ID                       | Severity | Detection Target                                                               | Description                                                                                     |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `TOOL_CMD_PIPE_TO_SHELL`      | CRITICAL | `curl/wget ... \| bash/sh` patterns                                            | Downloads and immediately executes remote scripts                                               |
+| `TOOL_CMD_OBFUSCATED_EXEC`    | HIGH     | `base64 -d \| bash` patterns                                                   | Executes base64-encoded commands                                                                |
+| `TOOL_CMD_IFS_INJECTION`      | HIGH     | `$IFS`, `${...IFS...}`                                                         | Token splitting that can evade naive word-boundary checks                                       |
+| `TOOL_CMD_CONTROL_CHARS`      | CRITICAL | Non-printable control characters (for example NUL)                             | Characters that can hide metacharacters from simple scans                                       |
+| `TOOL_CMD_UNICODE_WHITESPACE` | HIGH     | NBSP, ideographic space, and other Unicode whitespace                          | Whitespace that parsers and Bash may treat differently                                          |
+| `TOOL_CMD_PROC_ENVIRON`       | HIGH     | `/proc/self/environ`, `/proc/<pid>/environ`                                    | Reads process environment blobs (secrets, tokens), often chained with execution or exfiltration |
+| `TOOL_CMD_JQ_SYSTEM`          | HIGH     | `jq` with `system(`                                                            | Shell execution embedded in jq programs                                                         |
+| `TOOL_CMD_JQ_FILE_FLAGS`      | HIGH     | `jq` `-f` / `--from-file`, `--rawfile`, `--slurpfile`, `-L`, `--library-path`  | Reading arbitrary files or loading external jq code paths                                       |
+| `TOOL_CMD_ZSH_DANGEROUS`      | HIGH     | `zmodload`, `emulate ... -c`, `sysopen` / `zpty` / `ztcp`, `zf_*`, `fc ... -e` | zsh builtins that enable raw I/O, network, or execution paths beyond typical binary checks      |
 
 **Privilege Escalation (CRITICAL/HIGH):**
 
@@ -215,15 +215,15 @@ Tool Guard includes the following built-in detection rules (for `execute_shell_c
 
 The engine also runs **`ShellEvasionGuardian`** on `execute_shell_command`. It tracks quoting state to catch obfuscation that pure line- or regex-only checks can miss (for example command substitution outside single quotes, `$'...'` / `$"..."` tricks, backslash-escaped whitespace or shell operators—with a carve-out for common `find ... -exec ... {} \;`—raw newlines or `\r` that split commands while skipping heredocs, `#` comment / quote desync, and quoted newlines followed by `#`-looking lines). Reported rule IDs (severity **HIGH**):
 
-| Rule ID                               | Description                                                                 |
-| ------------------------------------- | --------------------------------------------------------------------------- |
-| `SHELL_EVASION_COMMAND_SUBSTITUTION`  | Backticks or command / process substitution–style patterns outside `'`...`'` |
-| `SHELL_EVASION_OBFUSCATED_FLAGS`      | ANSI-C or locale quoting, empty-quote flag tricks, or quoted flag tokens    |
-| `SHELL_EVASION_BACKSLASH_WHITESPACE`  | Backslash-escaped space or tab outside quotes                               |
-| `SHELL_EVASION_BACKSLASH_OPERATOR`    | Backslash before `; \| & < >` outside quotes                                |
-| `SHELL_EVASION_NEWLINE`               | Carriage return or unquoted newline before further command text             |
-| `SHELL_EVASION_COMMENT_QUOTE_DESYNC`  | Quote characters inside an unquoted `#` comment line                        |
-| `SHELL_EVASION_QUOTED_NEWLINE`        | Newline inside quotes where the next segment looks like a `#` comment line  |
+| Rule ID                              | Description                                                                  |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `SHELL_EVASION_COMMAND_SUBSTITUTION` | Backticks or command / process substitution–style patterns outside `'`...`'` |
+| `SHELL_EVASION_OBFUSCATED_FLAGS`     | ANSI-C or locale quoting, empty-quote flag tricks, or quoted flag tokens     |
+| `SHELL_EVASION_BACKSLASH_WHITESPACE` | Backslash-escaped space or tab outside quotes                                |
+| `SHELL_EVASION_BACKSLASH_OPERATOR`   | Backslash before `; \| & < >` outside quotes                                 |
+| `SHELL_EVASION_NEWLINE`              | Carriage return or unquoted newline before further command text              |
+| `SHELL_EVASION_COMMENT_QUOTE_DESYNC` | Quote characters inside an unquoted `#` comment line                         |
+| `SHELL_EVASION_QUOTED_NEWLINE`       | Newline inside quotes where the next segment looks like a `#` comment line   |
 
 **Configuration note:** `disabled_rules` in `config.json` applies only to YAML rule IDs (typically `TOOL_CMD_*`). It does **not** disable `SHELL_EVASION_*` findings; turning off Tool Guard disables all guardians, including this one.
 
