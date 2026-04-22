@@ -116,7 +116,7 @@ def _check_command_substitution(
     command: str,
     unquoted: str,
 ) -> GuardFinding | None:
-    """bashSecurity #8: detect command substitution patterns.
+    """detect command substitution patterns.
 
     Also detects unescaped backticks (outside quotes) which are the
     legacy command substitution syntax.
@@ -157,7 +157,7 @@ def _check_command_substitution(
 
 
 def _check_obfuscated_flags(command: str) -> GuardFinding | None:
-    """bashSecurity #4: detect ANSI-C / locale quoting and empty-quote
+    """detect ANSI-C / locale quoting and empty-quote
     flag obfuscation.
 
     These quoting mechanisms can hide flag characters (e.g. ``$'\\x2d exec'``
@@ -237,7 +237,7 @@ def _check_obfuscated_flags(command: str) -> GuardFinding | None:
 def _check_backslash_escaped_whitespace(
     command: str,
 ) -> GuardFinding | None:
-    """bashSecurity #15: detect backslash-escaped space/tab outside quotes.
+    """detect backslash-escaped space/tab outside quotes.
 
     ``echo\\ test`` is a single token in bash (command named "echo test"),
     but parsers may decode the escape and produce two separate tokens.
@@ -264,7 +264,7 @@ def _check_backslash_escaped_whitespace(
 def _check_backslash_escaped_operators(
     command: str,
 ) -> GuardFinding | None:
-    r"""bashSecurity #21: detect ``\;``, ``\|``, ``\&``, ``\<``, ``\>``
+    r"""detect ``\;``, ``\|``, ``\&``, ``\<``, ``\>``
     outside quotes.
 
     splitCommand normalises ``\;`` to bare ``;`` which causes a false
@@ -299,7 +299,7 @@ def _check_backslash_escaped_operators(
 
 
 def _check_newlines(command: str) -> GuardFinding | None:
-    """bashSecurity #7: detect newlines and carriage returns that could
+    """detect newlines and carriage returns that could
     separate hidden commands.
     """
     # Heredoc intentionally relies on multiline input and should not be
@@ -364,7 +364,7 @@ def _looks_like_heredoc(command: str) -> bool:
 
 
 def _check_comment_quote_desync(command: str) -> GuardFinding | None:
-    """bashSecurity #22: detect quote characters inside ``#`` comments.
+    """detect quote characters inside ``#`` comments.
 
     Everything after an unquoted ``#`` is a comment in bash, but quote
     trackers don't handle comments — a ``'`` or ``"`` in a comment
@@ -402,7 +402,7 @@ def _check_comment_quote_desync(command: str) -> GuardFinding | None:
 
 
 def _check_quoted_newline(command: str) -> GuardFinding | None:
-    """bashSecurity #23: detect newlines inside quoted strings where the
+    """detect newlines inside quoted strings where the
     next line starts with ``#``.
 
     Line-based processing (like stripCommentLines) drops ``#``-prefixed
