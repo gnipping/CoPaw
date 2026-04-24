@@ -5,6 +5,9 @@ Blocks tool calls that target files explicitly listed in a sensitive-file set.
 """
 from __future__ import annotations
 
+import ntpath
+import os
+import re
 import shlex
 import uuid
 from pathlib import Path
@@ -66,9 +69,67 @@ def _workspace_root() -> Path:
     return Path(get_current_workspace_dir() or WORKING_DIR)
 
 
+# Windows path recognition helpers --------------------------------------------
+# Drive-letter absolute path, e.g. C:\foo, D:/bar
+_WIN_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+# Drive-letter only (no separator), e.g. C:foo – treated as relative on drive C
+_WIN_DRIVE_ONLY_RE = re.compile(r"^[A-Za-z]:")
+# UNC path, e.g. \\server\share\...
+_WIN_UNC_RE = re.compile(r"^\\\\[^\\/?%*:|\"<>]+[\\/][^\\/?%*:|\"<>]+")
+
+
+def _is_windows_style_path(raw: str) -> bool:
+    """Heuristic check: does *raw* look like a Windows-style path string?"""
+    if not raw:
+        return False
+    if _WIN_DRIVE_RE.match(raw):
+        return True
+    if _WIN_UNC_RE.match(raw):
+        return True
+    # Leading .\ / ..\ / \ (root of current drive)
+    if raw.startswith((".\\", "..\\", "\\")):
+        return True
+    # Any backslash acting as a segment separator is a reasonable signal.
+    # Note: this can false-positive on POSIX shell escapes, but those tokens
+    # are rarely meaningful as real filesystem paths anyway.
+    if "\\" in raw:
+        return True
+    return False
+
+
+def _canonicalize_windows_path(raw: str) -> str:
+    """Normalize a Windows-style path to a canonical lowercase forward-slash
+    string that is comparable across call sites.
+
+    Uses :mod:`ntpath` so it works on POSIX hosts too (important for tests
+    and for mixed environments).
+    """
+    expanded = os.path.expanduser(raw) if raw.startswith("~") else raw
+    if not ntpath.isabs(expanded):
+        root = str(_workspace_root())
+        expanded = ntpath.join(root, expanded)
+    normalized = ntpath.normpath(expanded)
+    # Canonical form: forward slashes + lowercase (NTFS is case-insensitive).
+    return normalized.replace("\\", "/").lower()
+
+
 def _normalize_path(raw_path: str) -> str:
-    """Normalize *raw_path* to a canonical absolute path string."""
-    p = Path(raw_path).expanduser()
+    """Normalize *raw_path* to a canonical absolute path string.
+
+    Supports both POSIX and Windows-style paths. When running on Windows
+    or when *raw_path* clearly looks like a Windows path, the result uses
+    forward slashes and is lowercased to reflect NTFS case-insensitivity.
+    """
+    if not isinstance(raw_path, str):
+        return ""
+    raw = raw_path.strip()
+    if not raw:
+        return ""
+
+    if os.name == "nt" or _is_windows_style_path(raw):
+        return _canonicalize_windows_path(raw)
+
+    p = Path(raw).expanduser()
     if not p.is_absolute():
         p = _workspace_root() / p
     return str(p.resolve(strict=False))
@@ -116,7 +177,12 @@ _MIME_PREFIXES = (
 
 
 def _looks_like_path_token(token: str) -> bool:
-    """Heuristic check whether a shell token is likely a file path."""
+    """Heuristic check whether a shell token is likely a file path.
+
+    Recognizes POSIX-style paths (``/``, ``./``, ``../``, ``~``) as well as
+    Windows-style paths (drive-letter, UNC, ``.\\``/``..\\``, or
+    backslash-containing tokens).
+    """
     if not token or token.startswith("-"):
         return False
     lowered = token.lower()
@@ -124,20 +190,55 @@ def _looks_like_path_token(token: str) -> bool:
         return False
     if lowered.startswith(_MIME_PREFIXES):
         return False
-    if token.startswith(("~", "/", "./", "../")):
-        return True
-    if "/" in token:
-        return True
-    return False
+
+    posix_signal = token.startswith(("~", "/", "./", "../")) or "/" in token
+    windows_signal = any(
+        (
+            _WIN_DRIVE_RE.match(token),
+            _WIN_DRIVE_ONLY_RE.match(token),
+            _WIN_UNC_RE.match(token),
+            token.startswith((".\\", "..\\", "\\")),
+            "\\" in token,
+        ),
+    )
+    return bool(posix_signal or windows_signal)
+
+
+def _strip_surrounding_quotes(token: str) -> str:
+    """Strip a single matching pair of ASCII quotes around *token*."""
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
+
+
+def _extract_attached_redirect_path(token: str) -> str | None:
+    """Return redirected path for attached forms like ``2>err.log``."""
+    for op in _REDIRECT_OPS_BY_LEN:
+        if token.startswith(op) and len(token) > len(op):
+            possible_path = token[len(op) :]
+            if _looks_like_path_token(possible_path):
+                return possible_path
+            return None
+    return None
 
 
 def _extract_paths_from_shell_command(command: str) -> list[str]:
-    """Extract candidate file paths from a shell command string."""
+    """Extract candidate file paths from a shell command string.
+
+    On Windows, :func:`shlex.split` is invoked with ``posix=False`` so that
+    backslashes in paths like ``C:\\Users\\foo`` are not interpreted as POSIX
+    escape characters and dropped from the token stream.
+    """
+    use_posix = os.name != "nt"
     try:
-        tokens = shlex.split(command, posix=True)
+        tokens = shlex.split(command, posix=use_posix)
     except ValueError:
         # Best-effort fallback when quotes are malformed.
         tokens = command.split()
+    if not use_posix:
+        # ``posix=False`` keeps surrounding quotes in tokens. Strip them so
+        # downstream path checks see the raw value.
+        tokens = [_strip_surrounding_quotes(t) for t in tokens]
 
     candidates: list[str] = []
     i = 0
@@ -154,15 +255,9 @@ def _extract_paths_from_shell_command(command: str) -> list[str]:
             continue
 
         # Handle attached redirection: `>out.txt`, `2>err.log`, `<in.txt`
-        attached = False
-        for op in _REDIRECT_OPS_BY_LEN:
-            if token.startswith(op) and len(token) > len(op):
-                possible_path = token[len(op) :]
-                if _looks_like_path_token(possible_path):
-                    candidates.append(possible_path)
-                attached = True
-                break
-        if attached:
+        attached_path = _extract_attached_redirect_path(token)
+        if attached_path is not None:
+            candidates.append(attached_path)
             i += 1
             continue
 
@@ -247,14 +342,32 @@ class FilePathToolGuardian(BaseToolGuardian):
         self.set_sensitive_files(_load_sensitive_files_from_config())
 
     def _is_sensitive(self, abs_path: str) -> bool:
-        """Return True when *abs_path* hits sensitive file/dir constraints."""
-        path_obj = Path(abs_path)
+        """Return True when *abs_path* hits sensitive file/dir constraints.
+
+        Uses string prefix matching on the canonical normalized paths so the
+        check behaves consistently for both POSIX and Windows-style paths
+        (including on hosts where :class:`pathlib.Path` cannot parse the
+        target's native separators).
+        """
+        if not abs_path:
+            return False
         if abs_path in self._sensitive_files:
             return True
-        return any(
-            path_obj.is_relative_to(Path(dir_path))
-            for dir_path in self._sensitive_dirs
-        )
+        for dir_path in self._sensitive_dirs:
+            if not dir_path:
+                continue
+            # Normalize both sides to have no trailing separator, then test
+            # for either exact equality or a proper segment-boundary prefix.
+            trimmed = dir_path.rstrip("/\\")
+            if not trimmed:
+                continue
+            if abs_path == trimmed:
+                return True
+            if abs_path.startswith(trimmed + "/"):
+                return True
+            if abs_path.startswith(trimmed + "\\"):
+                return True
+        return False
 
     def _make_finding(
         self,
